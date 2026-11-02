@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -28,7 +29,7 @@ func TestReportsPromptsOffAndSaysNothingWasSent(t *testing.T) {
 	if code := run(nil, &out, &errs); code != 0 {
 		t.Fatalf("exit %d: %s", code, errs.String())
 	}
-	for _, want := range []string{"DANGEROUS", "claude-code", "Nothing was sent anywhere", "golem-exec"} {
+	for _, want := range []string{"DANGEROUS", "claude-code", "Nothing was sent anywhere", installCommand(runtime.GOOS)} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("missing %q in:\n%s", want, out.String())
 		}

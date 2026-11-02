@@ -63,19 +63,40 @@ On Windows, copy `golem-exec.exe` to `%USERPROFILE%\.golem\bin\bash.exe` and set
 
 ### With Golem
 
-With the Golem agent running, `golem-exec` asks it for each session's policy
-instead of using the baseline. The agent, called the witness in the code,
-decides that policy. After a web fetch, a prompt injection or a jail denial in
-a session, its later commands lose:
+The Golem agent is free to use and needs no account. With no key it runs on
+your machine only, and sends nothing anywhere:
+
+```sh
+curl -fsSL https://app.golem.team/install.sh | sh
+```
+
+On Windows, in PowerShell run as administrator:
+
+```powershell
+iwr -useb https://app.golem.team/install.ps1 | iex
+```
+
+It replaces what you set up above rather than adding to it. It installs its own
+`golem-exec` in `~/.golem/bin`, under the same names, so `CLAUDE_CODE_SHELL`
+stays as it is, and `golem check` is the same report as `golem-check`.
+
+The agent, called the witness in the code, gives each session its own policy
+instead of the baseline. After a web fetch, a prompt injection or a jail
+denial in a session, its later commands lose:
 
 - the network;
 - cloud and package-registry credentials;
 - the SSH agent and the keychain;
 - writes outside the workspace.
 
-Golem also records what each agent did, enforces rules on its tool calls, and
-runs untrusted repositories, pages and files in a sandbox. See
-[golem.team](https://golem.team) and [docs.golem.team/shield](https://docs.golem.team/shield).
+It also lets agents hand untrusted repositories, pages and files to a sandbox,
+and it enforces built-in rules on their tool calls. `golem connect --key`
+links the machine to a Golem workspace, which records what each agent did and
+shows it in a console. See [golem.team](https://golem.team) and
+[docs.golem.team/shield](https://docs.golem.team/shield).
+
+To go back, uninstall the agent and copy your own `golem-exec` into
+`~/.golem/bin` again.
 
 ## Packages
 

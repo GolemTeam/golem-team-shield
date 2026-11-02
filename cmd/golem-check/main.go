@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 
 	"github.com/GolemTeam/golem-team-shield/agentposture"
 )
@@ -37,8 +38,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	agentposture.WriteReport(stdout, items)
 	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "golem-exec puts every shell command your agents run in a kernel jail. Golem adds")
-	fmt.Fprintln(stdout, "a sandbox for untrusted repos, pages and files, free and with no account:")
-	fmt.Fprintln(stdout, "  https://golem.team")
+	fmt.Fprintln(stdout, "Put every shell command your agents run in a kernel jail, and run untrusted repos,")
+	fmt.Fprintln(stdout, "pages and files in a sandbox, free and with no account:")
+	fmt.Fprintln(stdout, "  "+installCommand(runtime.GOOS))
 	return 0
+}
+
+// installCommand installs the Golem agent, which with no key runs on this
+// machine only. On Windows it needs PowerShell run as administrator.
+func installCommand(goos string) string {
+	if goos == "windows" {
+		return "iwr -useb https://app.golem.team/install.ps1 | iex   (PowerShell, as administrator)"
+	}
+	return "curl -fsSL https://app.golem.team/install.sh | sh"
 }
