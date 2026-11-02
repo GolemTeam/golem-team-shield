@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -17,8 +18,20 @@ type fakeSetup struct {
 	ran       []string
 }
 
+// hostLayout is the shim layout this machine can really build: a Unix one's
+// symlinks and execute bits don't exist on Windows.
+func hostLayout() string {
+	if runtime.GOOS == "windows" {
+		return "windows"
+	}
+	return "darwin"
+}
+
 func newFakeSetup(t *testing.T, goos string) *fakeSetup {
 	t.Helper()
+	if goos != "windows" && runtime.GOOS == "windows" {
+		t.Skip("a Unix shim layout needs a Unix host")
+	}
 	f := &fakeSetup{}
 	f.setup = &setup{
 		home: t.TempDir(), goos: goos, exe: os.Args[0], loginShell: "/bin/zsh",
@@ -96,12 +109,13 @@ func TestStrictKeepsTheCloudCredentialsOut(t *testing.T) {
 }
 
 func TestInstallLeavesTheUsersOwnShellAndSaysHow(t *testing.T) {
-	f := newFakeSetup(t, "darwin")
-	writeFile(t, f.settingsPath(), `{"env": {"CLAUDE_CODE_SHELL": "/opt/homebrew/bin/fish"}}`)
+	f := newFakeSetup(t, hostLayout())
+	shellVar := f.claudeShell().Var()
+	writeFile(t, f.settingsPath(), `{"env": {"`+shellVar+`": "/opt/homebrew/bin/fish"}}`)
 	if code := f.install(false); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
-	if got := f.settingsEnv(t)["CLAUDE_CODE_SHELL"]; got != "/opt/homebrew/bin/fish" {
+	if got := f.settingsEnv(t)[shellVar]; got != "/opt/homebrew/bin/fish" {
 		t.Errorf("the user's shell was replaced with %q", got)
 	}
 	if !strings.Contains(f.out.String(), "left alone") {
@@ -110,18 +124,18 @@ func TestInstallLeavesTheUsersOwnShellAndSaysHow(t *testing.T) {
 }
 
 func TestSettingsThatDoNotParseGetTheLineToAdd(t *testing.T) {
-	f := newFakeSetup(t, "darwin")
+	f := newFakeSetup(t, hostLayout())
 	writeFile(t, f.settingsPath(), "{ // comments are not JSON\n}")
 	if code := f.install(false); code != 1 {
 		t.Fatalf("exit %d, want 1", code)
 	}
-	if !strings.Contains(f.errs.String(), `"CLAUDE_CODE_SHELL"`) {
+	if !strings.Contains(f.errs.String(), `"`+f.claudeShell().Var()+`"`) {
 		t.Errorf("no line to add:\n%s", f.errs.String())
 	}
 }
 
 func TestAFailedSelfTestFailsTheInstall(t *testing.T) {
-	f := newFakeSetup(t, "darwin")
+	f := newFakeSetup(t, hostLayout())
 	f.selfTest = func(string, string) (int, error) { return 0, nil }
 	if code := f.install(false); code != 1 || !strings.Contains(f.errs.String(), "Do not rely on the jail") {
 		t.Errorf("exit %d:\n%s", code, f.errs.String())
@@ -129,7 +143,7 @@ func TestAFailedSelfTestFailsTheInstall(t *testing.T) {
 }
 
 func TestWithTheAgentNothingIsTouched(t *testing.T) {
-	f := newFakeSetup(t, "darwin")
+	f := newFakeSetup(t, hostLayout())
 	f.agentRuns = func() bool { return true }
 	if code := f.install(false); code != 0 || !strings.Contains(f.out.String(), "Golem agent runs the shield") {
 		t.Fatalf("exit %d:\n%s", code, f.out.String())
@@ -154,7 +168,7 @@ func TestNoJailMeansNoInstall(t *testing.T) {
 }
 
 func TestUninstallPutsClaudeCodeBack(t *testing.T) {
-	f := newFakeSetup(t, "darwin")
+	f := newFakeSetup(t, hostLayout())
 	writeFile(t, f.settingsPath(), `{"model": "x"}`)
 	f.install(false)
 	if code := f.uninstall(true); code != 0 {
@@ -164,7 +178,7 @@ func TestUninstallPutsClaudeCodeBack(t *testing.T) {
 	if strings.TrimSpace(string(b)) != "{\n  \"model\": \"x\"\n}" {
 		t.Errorf("settings after uninstall: %s", b)
 	}
-	for _, p := range []string{filepath.Join(f.binDir(), "golem-zsh"), filepath.Join(f.binDir(), "golem-exec"), shield.ConfigPath(f.home)} {
+	for _, p := range append(f.shims(), filepath.Join(f.binDir(), "golem-exec"), shield.ConfigPath(f.home)) {
 		if _, err := os.Lstat(p); err == nil {
 			t.Errorf("%s is still there", p)
 		}
@@ -183,7 +197,7 @@ func TestWindowsInstallsGitBashAndTurnsPowerShellOff(t *testing.T) {
 }
 
 func TestStatusSaysWhatCommandsGet(t *testing.T) {
-	f := newFakeSetup(t, "darwin")
+	f := newFakeSetup(t, hostLayout())
 	f.status()
 	if !strings.Contains(f.out.String(), "not installed") || !strings.Contains(f.out.String(), "baseline") {
 		t.Errorf("before install:\n%s", f.out.String())

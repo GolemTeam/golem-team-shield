@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -70,7 +71,7 @@ func TestFilesRoundTripPrivately(t *testing.T) {
 	if !strings.Contains(string(b), "\n  \"env\": {\n    \"A\": \"1\"\n  }\n") {
 		t.Errorf("not indented: %q", b)
 	}
-	if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {
+	if fi, _ := os.Stat(path); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Errorf("mode %v, want 0600", fi.Mode().Perm())
 	}
 	back, existed, err := ReadFile(path)
