@@ -112,6 +112,39 @@ func TestWitnessDownFallsBackToCacheThenBaseline(t *testing.T) {
 	}
 }
 
+// With no witness ever, the machine's own settings decide, and the witness's
+// cached decisions outrank them.
+func TestWithNoWitnessTheConfigDecides(t *testing.T) {
+	s, _, _ := testShim(t, "http://127.0.0.1:1")
+	if err := shield.WriteConfig(shield.ConfigPath(s.home), shield.Config{Lockdown: true}); err != nil {
+		t.Fatal(err)
+	}
+	if p, live := s.policy(shield.PolicyRequest{SessionID: "sess-1"}); live || !p.Tainted() || !p.Enforce {
+		t.Fatalf("the config's lockdown was not applied: %+v", p)
+	}
+	s.storeCache(s.hostCachePath(), shield.Policy{Enforce: true, State: shield.Clean, Grants: shield.Grants{Docker: true}})
+	if p, _ := s.policy(shield.PolicyRequest{SessionID: "sess-2"}); p.Tainted() || !p.Grants.Docker {
+		t.Fatalf("the config outranked the agent's cached decision: %+v", p)
+	}
+}
+
+func TestABrokenConfigIsLockedDownAndSaysSo(t *testing.T) {
+	s, _, stderr := testShim(t, "http://127.0.0.1:1")
+	path := shield.ConfigPath(s.home)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"enforce": false, "typo": 1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := s.policy(shield.PolicyRequest{}); !reflect.DeepEqual(p, shield.Unreadable()) {
+		t.Fatalf("a broken config did not lock down: %+v", p)
+	}
+	if !bytes.Contains(stderr.Bytes(), []byte("locked down until it is fixed")) {
+		t.Errorf("no warning: %q", stderr.String())
+	}
+}
+
 // A profile that revoked a grant must not hand it back to a new session just
 // because the witness is down.
 func TestWitnessDownKeepsTheMachinesLastGrants(t *testing.T) {

@@ -1,3 +1,4 @@
 /golem-check
 /golem-exec
 *.exe
+/dist/

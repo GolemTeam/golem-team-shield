@@ -1,19 +1,138 @@
 # golem-team-shield
 
 Two free tools for the AI coding agents on your machine, from
-[Golem](https://golem.team): a check of how they are set up to run, and a kernel
-jail around every shell command they run. Neither needs an account, and neither
-sends anything anywhere.
+[Golem](https://golem.team). Neither needs an account, and neither sends
+anything anywhere.
 
 | | What it does |
 |---|---|
+| `golem-exec` | Runs every shell command Claude Code starts inside a kernel jail: Seatbelt on macOS, Landlock and seccomp on Linux, a restricted token on Windows. |
 | `golem-check` | Reads your agents' settings and prints the ones that let them act without asking. |
-| `golem-exec` | Runs each shell command an agent starts inside a kernel jail: Seatbelt on macOS, Landlock and seccomp on Linux, AppContainer on Windows. |
+
+## What the jail stops
+
+A prompt injection that gets an agent to run `cat ~/.ssh/id_ed25519`, or to add
+a line to `~/.zshrc`, fails. Here is exactly what a jailed command can and can't
+do with the default settings:
+
+| Denied | Still allowed |
+|---|---|
+| Reading private SSH and GPG keys, `.netrc`, `.git-credentials` and shell history | The network |
+| Writing to `~/.ssh`, your shell startup files, git config, `~/Library/LaunchAgents`, and the agents' settings and hooks | Cloud credentials: `~/.aws`, gcloud, Azure, kube, and Docker, npm and PyPI logins (turn these off with `--strict`) |
+| Secret-shaped environment variables (`*TOKEN*`, `*SECRET*`, `*API_KEY*`, `GH_*`, `ANTHROPIC_*`, `OPENAI_*` and others), which are removed | The SSH agent, the keychain and the Docker socket |
+| Reading or writing `~/.golem`, where the jail's own settings live | Everything else in your home directory and your projects |
+
+So it stops the obvious theft and persistence. It does not stop a command from
+sending what it can read to the internet. Lockdown does (see
+[Settings](#settings)), at the cost of the network for every command.
+
+It jails shell commands only. Claude Code's own Read, Write and fetch tools
+don't go through a shell, so they are not jailed. For now it works with Claude
+Code only: other agents have no setting that names the shell they run. Linux
+and Windows each have a few gaps of their own, listed under
+[what the jail does not cover](https://docs.golem.team/shield#what-the-jail-does-not-cover).
+
+## Install
+
+### From a release
+
+On macOS or Linux:
+
+```sh
+os=$(uname -s | tr '[:upper:]' '[:lower:]')
+arch=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
+base=https://github.com/GolemTeam/golem-team-shield/releases/latest/download
+curl -fsSLO "$base/golem-team-shield_${os}_${arch}.tar.gz"
+curl -fsSLO "$base/checksums.txt"
+grep "_${os}_${arch}.tar.gz" checksums.txt | shasum -a 256 -c
+tar -xzf "golem-team-shield_${os}_${arch}.tar.gz" golem-exec golem-check
+./golem-exec install
+```
+
+On Linux without `shasum`, use `sha256sum -c` instead. If you download in a
+browser on a Mac, clear the quarantine flag before running the binaries:
+`xattr -d com.apple.quarantine golem-exec golem-check`.
+
+On Windows, in PowerShell, with [Git for Windows](https://git-scm.com/download/win)
+installed (Claude Code runs its commands in Git Bash there):
+
+```powershell
+$base = 'https://github.com/GolemTeam/golem-team-shield/releases/latest/download'
+Invoke-WebRequest "$base/golem-team-shield_windows_amd64.zip" -OutFile shield.zip
+Invoke-WebRequest "$base/checksums.txt" -OutFile checksums.txt
+(Get-FileHash shield.zip -Algorithm SHA256).Hash.ToLower()   # must match checksums.txt
+Expand-Archive shield.zip -DestinationPath golem-shield
+.\golem-shield\golem-exec.exe install
+```
+
+### With Go
+
+```sh
+go install github.com/GolemTeam/golem-team-shield/cmd/golem-exec@latest
+go install github.com/GolemTeam/golem-team-shield/cmd/golem-check@latest
+golem-exec install
+```
+
+### What `golem-exec install` does
+
+1. It copies itself to `~/.golem/bin`, under the names Claude Code runs as a
+   shell: `golem-zsh` and `golem-bash`, or `bash.exe` on Windows. The jail keeps
+   that directory unwritable, so no command can replace the shell the next
+   command runs in.
+2. It writes the settings, `~/.golem/shield.json`, with every setting named.
+3. It points Claude Code at the jail. It sets `CLAUDE_CODE_SHELL` in
+   `~/.claude/settings.json`; on Windows it sets `CLAUDE_CODE_GIT_BASH_PATH` and
+   turns off Claude Code's PowerShell tool, whose commands would not be jailed.
+   If you set Claude Code's shell yourself, it leaves that alone and says how to
+   change it.
+4. It tests the jail. A plain command must run, and a read of `~/.golem` must
+   be denied.
+
+It refuses on a machine where the jail can't be built: Linux older than 5.13 or
+without Landlock enabled, or macOS inside another sandbox. Then restart Claude
+Code.
+
+```sh
+golem-exec status      # what is installed, and what commands get
+golem-exec test        # run the self-test again
+golem-exec uninstall   # put Claude Code's shell back (--purge also removes the settings)
+```
+
+## Settings
+
+`~/.golem/shield.json`:
+
+```json
+{
+  "enforce": true,
+  "lockdown": false,
+  "ssh_agent": true,
+  "docker": true,
+  "cloud_credentials": true,
+  "env_allow": [],
+  "env_deny": []
+}
+```
+
+| Setting | What it does |
+|---|---|
+| `enforce` | `false` runs commands without a jail. |
+| `lockdown` | Every command loses the network, the SSH agent, Docker, cloud credentials and writes outside the project it runs in. On Windows, which can't take the network from a command, commands don't run at all. |
+| `ssh_agent` | The SSH agent and the keychain. |
+| `docker` | The Docker socket. |
+| `cloud_credentials` | `~/.aws`, gcloud, Azure, kube and the Docker, npm and PyPI logins, and the cloud tools' variables (`AWS_*`, `KUBECONFIG` and others). `golem-exec install --strict` writes `false`. |
+| `env_allow` | Secret-shaped variables to keep, by name or as a `PREFIX*`. Ignored in lockdown. |
+| `env_deny` | Variables to remove, by name or as a `PREFIX*`. |
+
+Changes apply to the next command; there is nothing to restart. The jail can
+neither read nor write `~/.golem`, so the agent being watched can't loosen its
+own jail. A name the shim doesn't know, or a file that isn't valid JSON, locks
+every command down until it is fixed, so a typo can only make the jail
+tighter. `golem-exec status` shows what commands get.
 
 ## golem-check
 
 ```sh
-go install github.com/GolemTeam/golem-team-shield/cmd/golem-check@latest
 golem-check          # what is risky, worst first
 golem-check -json    # every finding, informational ones included
 ```
@@ -30,38 +149,7 @@ reads the settings of each repository Claude Code has opened. It reports:
 
 It reports a setting's name and value, never a file's contents.
 
-## golem-exec
-
-`golem-exec` is a shell shim. The agent runs it as its shell, and it runs the
-real shell, with the same arguments, inside a jail. Everything the command
-starts inherits the jail.
-
-On its own, every command gets the baseline jail. The command cannot:
-
-- read private SSH keys, GnuPG private keys, `.netrc`, `.git-credentials` or
-  shell history;
-- write to `~/.ssh`, the agents' settings and hooks, your shell startup files,
-  your git config, or the directory the shim is installed in.
-
-For Claude Code on macOS or Linux:
-
-```sh
-go install github.com/GolemTeam/golem-team-shield/cmd/golem-exec@latest
-mkdir -p ~/.golem/bin
-cp "$(go env GOPATH)/bin/golem-exec" ~/.golem/bin/golem-exec
-ln -sf golem-exec ~/.golem/bin/golem-zsh     # or golem-bash
-export CLAUDE_CODE_SHELL=~/.golem/bin/golem-zsh
-```
-
-The name decides which shell runs: `golem-zsh` runs `/bin/zsh` and `golem-bash`
-runs `/bin/bash`. The shim never looks the shell up on `PATH`. Install it under
-`~/.golem/bin`, because the jail keeps that directory unwritable, so a command
-cannot replace the shim the next command runs in.
-
-On Windows, copy `golem-exec.exe` to `%USERPROFILE%\.golem\bin\bash.exe` and set
-`CLAUDE_CODE_GIT_BASH_PATH` to that path. It runs Git for Windows' `bash.exe`.
-
-### With Golem
+## With Golem
 
 The Golem agent is free to use and needs no account. With no key it runs on
 your machine only, and sends nothing anywhere:
@@ -78,11 +166,13 @@ iwr -useb https://app.golem.team/install.ps1 | iex
 
 It replaces what you set up above rather than adding to it. It installs its own
 `golem-exec` in `~/.golem/bin`, under the same names, so `CLAUDE_CODE_SHELL`
-stays as it is, and `golem check` is the same report as `golem-check`.
+stays as it is, and `golem check` is the same report as `golem-check`. With the
+agent running, it decides each command's policy and `~/.golem/shield.json` is
+not used.
 
-The agent, called the witness in the code, gives each session its own policy
-instead of the baseline. After a web fetch, a prompt injection or a jail
-denial in a session, its later commands lose:
+What the agent adds is a policy per session instead of one for every command.
+After a web fetch, a prompt injection or a jail denial in a session, that
+session's later commands lose:
 
 - the network;
 - cloud and package-registry credentials;
@@ -95,14 +185,13 @@ links the machine to a Golem workspace, which records what each agent did and
 shows it in a console. See [golem.team](https://golem.team) and
 [docs.golem.team/shield](https://docs.golem.team/shield).
 
-To go back, uninstall the agent and copy your own `golem-exec` into
-`~/.golem/bin` again.
+To go back, uninstall the agent and run `golem-exec install` again.
 
 ## Packages
 
 | Package | |
 |---|---|
-| [`shield`](shield/) | The jail's policy, and the compilers that turn it into a Seatbelt profile, Landlock and seccomp rules, or an AppContainer. |
+| [`shield`](shield/) | The jail's policy, its settings file, and the compilers that turn it into a Seatbelt profile, Landlock and seccomp rules, or a restricted token's deny entries. |
 | [`agentposture`](agentposture/) | The settings scan behind `golem-check`. It reads files and nothing else. |
 
 ## License

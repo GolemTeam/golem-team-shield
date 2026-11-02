@@ -32,6 +32,9 @@ func main() {
 		os.Exit(runJailStage(args))
 	}
 	witness := witnessURL(os.Getenv("GOLEM_WITNESS_URL"))
+	if isSelf(invoked) && (len(args) == 0 || !strings.HasPrefix(args[0], "-")) {
+		os.Exit(runCommand(newSetup(witness), args))
+	}
 
 	if invoked == "bash" || invoked == "sh" {
 		cmdline := strings.TrimSpace(invoked + " " + strings.Join(args, " "))

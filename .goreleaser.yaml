@@ -1,0 +1,39 @@
+# Release builds for golem-exec and golem-check. Push a tag (v0.1.0) and the
+# release workflow publishes archives for macOS, Linux and Windows with a
+# checksums file. Check locally with `goreleaser release --snapshot --clean`.
+version: 2
+
+project_name: golem-team-shield
+
+builds:
+  - id: golem-exec
+    main: ./cmd/golem-exec
+    binary: golem-exec
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: [-s -w]
+  - id: golem-check
+    main: ./cmd/golem-check
+    binary: golem-check
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: [-s -w]
+
+archives:
+  - ids: [golem-exec, golem-check]
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files: [LICENSE, README.md]
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github

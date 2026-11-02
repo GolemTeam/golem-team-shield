@@ -1,0 +1,429 @@
+package main
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"time"
+
+	"github.com/GolemTeam/golem-team-shield/internal/jsonobject"
+	"github.com/GolemTeam/golem-team-shield/shield"
+)
+
+// Run by its own name, golem-exec sets itself up as Claude Code's shell on a
+// machine with no Golem agent. Run under a shell's name (golem-zsh, golem-bash,
+// bash.exe) it is the shim.
+
+const cliUsage = `usage: golem-exec <command>
+
+  install [--strict]   jail every shell command Claude Code runs on this machine
+  status               show what is installed and the policy commands get
+  test                 check that the jail blocks what it should
+  uninstall [--purge]  put Claude Code's shell back (--purge also removes ~/.golem/shield.json)
+
+Settings: ~/.golem/shield.json. --strict also keeps cloud credentials out of reach.
+`
+
+func isSelf(invoked string) bool {
+	name := strings.TrimSuffix(strings.ToLower(invoked), ".exe")
+	return name == "golem-exec"
+}
+
+// setup is everything the commands touch, so tests can point it elsewhere.
+type setup struct {
+	home       string
+	goos       string
+	exe        string
+	loginShell string
+	witness    string
+	stdout     io.Writer
+	stderr     io.Writer
+	canJail    func() bool
+	agentRuns  func() bool
+	selfTest   func(shim, command string) (int, error)
+}
+
+func newSetup(witness string) *setup {
+	home, _ := os.UserHomeDir()
+	exe, _ := os.Executable()
+	if real, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = real
+	}
+	s := &setup{
+		home: home, goos: runtime.GOOS, exe: exe, loginShell: os.Getenv("SHELL"), witness: witness,
+		stdout: os.Stdout, stderr: os.Stderr, canJail: canJail, selfTest: runThroughShim,
+	}
+	s.agentRuns = s.agentPresent
+	return s
+}
+
+func runCommand(s *setup, args []string) int {
+	if len(args) == 0 {
+		fmt.Fprint(s.stderr, cliUsage)
+		return 2
+	}
+	flags := map[string]bool{}
+	for _, a := range args[1:] {
+		flags[strings.TrimLeft(a, "-")] = true
+	}
+	switch args[0] {
+	case "install":
+		return s.install(flags["strict"])
+	case "uninstall":
+		return s.uninstall(flags["purge"])
+	case "status":
+		return s.status()
+	case "test":
+		return s.test()
+	case "help", "-h", "--help":
+		fmt.Fprint(s.stdout, cliUsage)
+		return 0
+	}
+	fmt.Fprintf(s.stderr, "golem-exec: unknown command %q\n\n%s", args[0], cliUsage)
+	return 2
+}
+
+func (s *setup) binDir() string       { return filepath.Join(s.home, ".golem", "bin") }
+func (s *setup) settingsPath() string { return filepath.Join(s.home, ".claude", "settings.json") }
+
+// shims are the names golem-exec answers to as a shell, the first being the
+// one Claude Code is pointed at.
+func (s *setup) shims() []string {
+	if s.goos == "windows" {
+		return []string{filepath.Join(s.binDir(), "bash.exe")}
+	}
+	zsh, bash := filepath.Join(s.binDir(), "golem-zsh"), filepath.Join(s.binDir(), "golem-bash")
+	if strings.Contains(filepath.Base(s.loginShell), "bash") {
+		return []string{bash, zsh}
+	}
+	return []string{zsh, bash}
+}
+
+func (s *setup) claudeShell() shield.ClaudeShell {
+	return shield.ClaudeShell{
+		Windows: s.goos == "windows",
+		Shim:    s.shims()[0],
+		Ours: func(p string) bool {
+			if s.goos == "windows" {
+				return strings.EqualFold(filepath.Clean(p), s.shims()[0])
+			}
+			return strings.HasPrefix(p, s.binDir()+string(filepath.Separator)+"golem-")
+		},
+		Ready: func(p string) bool {
+			fi, err := os.Stat(p)
+			return err == nil && fi.Mode().IsRegular() && (s.goos == "windows" || fi.Mode()&0o111 != 0)
+		},
+	}
+}
+
+// agentPresent: a machine that joined Golem, or whose agent answers, has its
+// shield set up and decided by the agent.
+func (s *setup) agentPresent() bool {
+	if _, err := os.Stat(filepath.Join(s.home, ".golem", "joined")); err == nil {
+		return true
+	}
+	c := &http.Client{Timeout: 500 * time.Millisecond}
+	resp, err := c.Get(strings.TrimRight(s.witness, "/") + "/healthz")
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
+
+const agentManages = "The Golem agent runs the shield on this machine and decides its policy.\n" +
+	"Its settings are in the console, or `golem lockdown` with no account. Check it with `golem doctor`.\n"
+
+func (s *setup) install(strict bool) int {
+	if s.agentRuns() {
+		fmt.Fprint(s.stdout, agentManages)
+		return 0
+	}
+	if !s.canJail() {
+		fmt.Fprintln(s.stderr, "golem-exec: this machine cannot build the jail:", jailUnavailable(s.goos))
+		return 1
+	}
+	if err := s.installShims(); err != nil {
+		fmt.Fprintf(s.stderr, "golem-exec: could not install into %s: %v\n", s.binDir(), err)
+		return 1
+	}
+	fmt.Fprintf(s.stdout, "Installed the shim in %s\n", s.binDir())
+
+	cfgPath := shield.ConfigPath(s.home)
+	if _, found, err := shield.LoadConfig(cfgPath); !found {
+		cfg := shield.DefaultConfig()
+		if strict {
+			cfg = shield.StrictConfig()
+		}
+		if err := shield.WriteConfig(cfgPath, cfg); err != nil {
+			fmt.Fprintf(s.stderr, "golem-exec: could not write %s: %v\n", cfgPath, err)
+			return 1
+		}
+		fmt.Fprintf(s.stdout, "Wrote the settings to %s\n", cfgPath)
+	} else if err != nil {
+		fmt.Fprintf(s.stderr, "golem-exec: %s is not valid (%v); every command is locked down until it is fixed\n", cfgPath, err)
+	} else if strict {
+		fmt.Fprintf(s.stdout, "Kept your settings in %s; set \"cloud_credentials\": false there for --strict\n", cfgPath)
+	}
+
+	code := 0
+	cs := s.claudeShell()
+	if changes, err := s.editSettings(cs.Wire); err != nil {
+		fmt.Fprintf(s.stderr, "golem-exec: could not edit %s (%v). Add this to it yourself:\n  \"env\": {\"%s\": %q}\n", s.settingsPath(), err, cs.Var(), cs.Shim)
+		code = 1
+	} else if len(changes) > 0 {
+		for _, c := range changes {
+			fmt.Fprintf(s.stdout, "Claude Code: %s\n", c)
+		}
+	} else if current := s.currentShell(cs); current != "" && !cs.Ours(current) {
+		fmt.Fprintf(s.stdout, "Claude Code's shell is set to %s, so it was left alone. To jail it, set %s to %s in %s.\n",
+			current, cs.Var(), cs.Shim, s.settingsPath())
+	}
+
+	if s.test() != 0 {
+		code = 1
+	}
+	fmt.Fprintln(s.stdout)
+	fmt.Fprintln(s.stdout, "Restart Claude Code so it runs its shell commands in the jail.")
+	fmt.Fprintln(s.stdout, "  settings:  "+cfgPath)
+	fmt.Fprintln(s.stdout, "  check:     golem-exec status")
+	fmt.Fprintln(s.stdout, "  remove:    golem-exec uninstall")
+	return code
+}
+
+// installShims copies this binary into ~/.golem/bin under the shim names. The
+// jail keeps that directory unwritable, so a command cannot replace the shell
+// the next one runs in.
+func (s *setup) installShims() error {
+	bin, err := os.ReadFile(s.exe)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(s.binDir(), 0o700); err != nil {
+		return err
+	}
+	if s.goos == "windows" {
+		return writeExecutable(s.shims()[0], bin)
+	}
+	target := filepath.Join(s.binDir(), "golem-exec")
+	if filepath.Clean(s.exe) != target {
+		if err := writeExecutable(target, bin); err != nil {
+			return err
+		}
+	}
+	for _, link := range s.shims() {
+		if dest, err := os.Readlink(link); err == nil && dest == "golem-exec" {
+			continue
+		}
+		_ = os.Remove(link)
+		if err := os.Symlink("golem-exec", link); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeExecutable(path string, bin []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".golem-exec-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(bin); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0o755); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
+}
+
+func (s *setup) editSettings(edit func(*jsonobject.Object) ([]string, error)) ([]string, error) {
+	doc, _, err := jsonobject.ReadFile(s.settingsPath())
+	if err != nil {
+		return nil, err
+	}
+	changes, err := edit(doc)
+	if err != nil || len(changes) == 0 {
+		return nil, err
+	}
+	return changes, jsonobject.WriteFile(s.settingsPath(), doc)
+}
+
+func (s *setup) currentShell(cs shield.ClaudeShell) string {
+	doc, _, err := jsonobject.ReadFile(s.settingsPath())
+	if err != nil {
+		return ""
+	}
+	raw, ok := doc.Get("env")
+	if !ok {
+		return ""
+	}
+	env, err := jsonobject.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	var v string
+	if raw, ok := env.Get(cs.Var()); ok {
+		_ = json.Unmarshal(raw, &v)
+	}
+	return v
+}
+
+func (s *setup) uninstall(purge bool) int {
+	if s.agentRuns() {
+		fmt.Fprintln(s.stdout, "The Golem agent manages the shield on this machine; uninstall the agent to remove it.")
+		return 1
+	}
+	code := 0
+	if changes, err := s.editSettings(s.claudeShell().Unwire); err != nil {
+		fmt.Fprintf(s.stderr, "golem-exec: could not edit %s: %v\n", s.settingsPath(), err)
+		code = 1
+	} else {
+		for _, c := range changes {
+			fmt.Fprintf(s.stdout, "Claude Code: %s\n", c)
+		}
+	}
+	for _, p := range append(s.shims(), filepath.Join(s.binDir(), "golem-exec")) {
+		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(s.stderr, "golem-exec: could not remove %s: %v\n", p, err)
+			code = 1
+		}
+	}
+	if purge {
+		_ = os.Remove(shield.ConfigPath(s.home))
+		_ = os.RemoveAll(filepath.Join(s.home, ".golem", "shield"))
+	}
+	fmt.Fprintln(s.stdout, "Removed the shim. Restart Claude Code.")
+	return code
+}
+
+func (s *setup) status() int {
+	if s.agentRuns() {
+		fmt.Fprint(s.stdout, agentManages)
+		return 0
+	}
+	cs := s.claudeShell()
+	shim := "not installed (run: golem-exec install)"
+	if cs.Ready(cs.Shim) {
+		shim = cs.Shim
+	}
+	fmt.Fprintf(s.stdout, "shim         %s\n", shim)
+	switch current := s.currentShell(cs); {
+	case current == "":
+		fmt.Fprintf(s.stdout, "Claude Code  %s is not set, so its commands are not jailed\n", cs.Var())
+	case cs.Ours(current):
+		fmt.Fprintf(s.stdout, "Claude Code  %s = %s (jailed)\n", cs.Var(), current)
+	default:
+		fmt.Fprintf(s.stdout, "Claude Code  %s = %s (not the shim, so not jailed)\n", cs.Var(), current)
+	}
+	if s.canJail() {
+		fmt.Fprintf(s.stdout, "kernel jail  available\n")
+	} else {
+		fmt.Fprintf(s.stdout, "kernel jail  not available: %s\n", jailUnavailable(s.goos))
+	}
+
+	cfgPath := shield.ConfigPath(s.home)
+	cfg, found, err := shield.LoadConfig(cfgPath)
+	switch {
+	case !found:
+		fmt.Fprintln(s.stdout, "settings     none, so commands get the baseline")
+	case err != nil:
+		fmt.Fprintf(s.stdout, "settings     %s is not valid (%v), so every command is locked down\n", cfgPath, err)
+		cfg = shield.Config{Lockdown: true}
+	default:
+		fmt.Fprintf(s.stdout, "settings     %s\n", cfgPath)
+	}
+	p := cfg.Policy()
+	g := p.Effective()
+	fmt.Fprintf(s.stdout, "policy       jail %s, lockdown %s\n", onOff(p.Enforce), onOff(p.Tainted()))
+	fmt.Fprintf(s.stdout, "             ssh agent %s, docker %s, cloud credentials %s\n", onOff(g.Agent), onOff(g.Docker), onOff(g.Cloud))
+	if len(p.EnvAllow)+len(p.EnvDeny) > 0 {
+		fmt.Fprintf(s.stdout, "             env allow %v, deny %v\n", p.EnvAllow, p.EnvDeny)
+	}
+	return 0
+}
+
+// test runs two commands through the installed shim: one must run, and one
+// that reads a file the jail always denies must fail.
+func (s *setup) test() int {
+	cs := s.claudeShell()
+	if !cs.Ready(cs.Shim) {
+		fmt.Fprintln(s.stderr, "golem-exec: the shim is not installed (run: golem-exec install)")
+		return 1
+	}
+	cfg, _, err := shield.LoadConfig(shield.ConfigPath(s.home))
+	if err == nil && !cfg.Policy().Enforce {
+		fmt.Fprintln(s.stdout, "Self-test skipped: \"enforce\" is false in ~/.golem/shield.json, so commands run without a jail.")
+		return 0
+	}
+	probe := filepath.Join(s.home, ".golem", "shield", "self-test.txt")
+	if err := os.MkdirAll(filepath.Dir(probe), 0o700); err == nil {
+		err = os.WriteFile(probe, []byte("golem-exec self-test\n"), 0o600)
+	}
+	if err != nil {
+		fmt.Fprintf(s.stderr, "golem-exec: could not write the self-test file: %v\n", err)
+		return 1
+	}
+	if code, err := s.selfTest(cs.Shim, "true"); err != nil || code != 0 {
+		fmt.Fprintf(s.stderr, "golem-exec: self-test FAILED: a plain command did not run through the shim (exit %d, %v)\n", code, err)
+		return 1
+	}
+	if code, err := s.selfTest(cs.Shim, "cat '"+filepath.ToSlash(probe)+"'"); err != nil || code == 0 {
+		fmt.Fprintf(s.stderr, "golem-exec: self-test FAILED: a command read %s, which the jail should deny. Do not rely on the jail here.\n", probe)
+		return 1
+	}
+	fmt.Fprintln(s.stdout, "Self-test passed: commands run, and the jail denied a read of ~/.golem.")
+	return 0
+}
+
+func runThroughShim(shim, command string) (int, error) {
+	cmd := exec.Command(shim, "-c", command)
+	var env []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "CLAUDE_CODE_SESSION_ID=") {
+			env = append(env, kv)
+		}
+	}
+	cmd.Env = env
+	err := cmd.Run()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		return exit.ExitCode(), nil
+	}
+	if err != nil {
+		return -1, err
+	}
+	return 0, nil
+}
+
+func jailUnavailable(goos string) string {
+	switch goos {
+	case "linux":
+		return "this kernel has no Landlock (Linux 5.13 or later, with landlock among the enabled LSMs)"
+	case "darwin":
+		return "sandbox-exec could not run here, as happens inside another sandbox"
+	case "windows":
+		return "a restricted token could not be created"
+	}
+	return "golem-exec has no jail for " + goos
+}
+
+func onOff(b bool) string {
+	if b {
+		return "on"
+	}
+	return "off"
+}

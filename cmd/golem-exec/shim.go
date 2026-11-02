@@ -155,7 +155,10 @@ func withoutWorkspace(c shield.Context) shield.Context {
 
 // policy asks the witness. It keeps the answer per session, so a witness
 // restart can't forget a taint, and per machine, so a profile's switch-off or
-// revoked grant still holds for a session the shim hasn't seen before.
+// revoked grant still holds for a session the shim hasn't seen before. With no
+// witness ever, the machine's own ~/.golem/shield.json decides, then the
+// baseline: the witness's cached decisions outrank the file, so one left from
+// before the agent cannot loosen an agent machine.
 func (s *shim) policy(req shield.PolicyRequest) (shield.Policy, bool) {
 	cached, haveCache := s.loadCache(s.cachePath(req.SessionID))
 	live, err := s.fetch(req)
@@ -167,7 +170,7 @@ func (s *shim) policy(req shield.PolicyRequest) (shield.Policy, bool) {
 			host.State = shield.Clean
 			return host, false
 		}
-		return shield.Baseline(), false
+		return s.configPolicy(), false
 	}
 	if haveCache && cached.Tainted() {
 		live.State = shield.Tainted
@@ -177,6 +180,21 @@ func (s *shim) policy(req shield.PolicyRequest) (shield.Policy, bool) {
 	machine.State = shield.Clean
 	s.storeCache(s.hostCachePath(), machine)
 	return live, true
+}
+
+// configPolicy is what ~/.golem/shield.json asks for, or the baseline with no
+// file. A file that cannot be followed gets lockdown, and says so on every
+// command until it is fixed.
+func (s *shim) configPolicy() shield.Policy {
+	c, found, err := shield.LoadConfig(shield.ConfigPath(s.home))
+	if !found {
+		return shield.Baseline()
+	}
+	if err != nil {
+		fmt.Fprintf(s.stderr, "golem-exec: ~/.golem/shield.json is not valid (%v); every command is locked down until it is fixed\n", err)
+		return shield.Unreadable()
+	}
+	return c.Policy()
 }
 
 func (s *shim) fetch(req shield.PolicyRequest) (shield.Policy, error) {
