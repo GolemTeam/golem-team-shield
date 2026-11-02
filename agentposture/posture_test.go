@@ -1,6 +1,7 @@
 package agentposture
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,7 +48,8 @@ func has(got map[postureKey]Item, k postureKey) bool {
 func TestClaudeCodeBypassShellAllowAndSandbox(t *testing.T) {
 	env := postureTestEnv(t)
 	project := filepath.Join(t.TempDir(), "repo")
-	writePostureFile(t, filepath.Join(env.Home, ".claude.json"), `{"projects":{"`+project+`":{}}}`)
+	projects, _ := json.Marshal(map[string]any{"projects": map[string]any{project: map[string]any{}}})
+	writePostureFile(t, filepath.Join(env.Home, ".claude.json"), string(projects))
 	writePostureFile(t, filepath.Join(env.Home, ".claude", "settings.json"), `{
 		"permissions": {"defaultMode": "bypassPermissions", "allow": ["Read", "Bash(*)"]},
 		"skipDangerousModePermissionPrompt": true
