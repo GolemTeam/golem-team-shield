@@ -37,9 +37,10 @@ checksum:
   name_template: checksums.txt
 
 # The cask in GolemTeam/homebrew-golem-team, so
-# `brew install golemteam/golem-team/golem-team-shield` works. It needs the
-# GORELEASER_TAP_TOKEN secret (write access to that repo only); without it the
-# release still publishes and the cask is skipped.
+# `brew install golemteam/golem-team/golem-team-shield` works. The release
+# workflow mints GORELEASER_TAP_TOKEN from the golem-team-release GitHub App,
+# installed on that repo only; without the App the cask is skipped and the
+# release still publishes.
 homebrew_casks:
   - name: golem-team-shield
     ids: [shield]
