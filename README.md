@@ -1,5 +1,10 @@
 # golem-team-shield
 
+[![Release](https://img.shields.io/github/v/release/GolemTeam/golem-team-shield)](https://github.com/GolemTeam/golem-team-shield/releases/latest)
+[![Test](https://github.com/GolemTeam/golem-team-shield/actions/workflows/test.yml/badge.svg)](https://github.com/GolemTeam/golem-team-shield/actions/workflows/test.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![Go Reference](https://pkg.go.dev/badge/github.com/GolemTeam/golem-team-shield.svg)](https://pkg.go.dev/github.com/GolemTeam/golem-team-shield)
+
 Two free tools for the AI coding agents on your machine, from
 [Golem](https://golem.team). Neither needs an account, and neither sends
 anything anywhere.
