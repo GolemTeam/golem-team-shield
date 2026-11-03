@@ -24,6 +24,7 @@ import (
 const cliUsage = `usage: golem-exec <command>
 
   install [--strict]   jail every shell command Claude Code runs on this machine
+  install --refresh    update an installed shim to this binary, and nothing else
   status               show what is installed and the policy commands get
   test                 check that the jail blocks what it should
   uninstall [--purge]  put Claude Code's shell back (--purge also removes ~/.golem/shield.json)
@@ -76,6 +77,9 @@ func runCommand(s *setup, args []string) int {
 	}
 	switch args[0] {
 	case "install":
+		if flags["refresh"] {
+			return s.refresh()
+		}
 		return s.install(flags["strict"])
 	case "uninstall":
 		return s.uninstall(flags["purge"])
@@ -200,6 +204,29 @@ func (s *setup) install(strict bool) int {
 	fmt.Fprintln(s.stdout, "  check:     golem-exec status")
 	fmt.Fprintln(s.stdout, "  remove:    golem-exec uninstall")
 	return code
+}
+
+// refresh replaces an installed shim with this binary, so upgrading the copy a
+// package manager keeps also upgrades the one Claude Code runs. It touches
+// nothing else, does nothing where the agent manages the shield or nothing is
+// installed, and never fails: a package manager runs it after every upgrade.
+func (s *setup) refresh() int {
+	if s.agentRuns() {
+		return 0
+	}
+	installed := filepath.Join(s.binDir(), "golem-exec")
+	if s.goos == "windows" {
+		installed = s.shims()[0]
+	}
+	if _, err := os.Stat(installed); err != nil {
+		return 0
+	}
+	if err := s.installShims(); err != nil {
+		fmt.Fprintf(s.stderr, "golem-exec: could not update the shim in %s (%v); run golem-exec install\n", s.binDir(), err)
+		return 0
+	}
+	fmt.Fprintf(s.stdout, "Updated the shim in %s to golem-exec %s\n", s.binDir(), version)
+	return 0
 }
 
 // installShims copies this binary into ~/.golem/bin under the shim names. The

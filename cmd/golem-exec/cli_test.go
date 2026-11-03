@@ -215,6 +215,39 @@ func TestStatusSaysWhatCommandsGet(t *testing.T) {
 	}
 }
 
+func TestRefreshUpdatesOnlyAnInstalledShim(t *testing.T) {
+	f := newFakeSetup(t, hostLayout())
+	if code := runCommand(f.setup, []string{"install", "--refresh"}); code != 0 {
+		t.Fatalf("refresh with nothing installed exited %d", code)
+	}
+	if _, err := os.Stat(f.binDir()); err == nil {
+		t.Fatal("refresh installed a shim that was not there")
+	}
+
+	f.install(false)
+	writeFile(t, f.settingsPath(), `{"env": {"CLAUDE_CODE_SHELL": "/opt/homebrew/bin/fish"}}`)
+	before, _ := os.ReadFile(f.settingsPath())
+	newer := filepath.Join(t.TempDir(), "golem-exec-newer")
+	writeFile(t, newer, "newer build")
+	f.exe = newer
+	if code := runCommand(f.setup, []string{"install", "--refresh"}); code != 0 {
+		t.Fatalf("refresh exited %d: %s", code, f.errs.String())
+	}
+	if got, _ := os.ReadFile(f.shims()[0]); string(got) != "newer build" {
+		t.Errorf("the shim was not updated: %q", got)
+	}
+	if after, _ := os.ReadFile(f.settingsPath()); string(after) != string(before) {
+		t.Errorf("refresh touched Claude Code's settings:\n%s", after)
+	}
+
+	f.agentRuns = func() bool { return true }
+	f.exe = os.Args[0]
+	runCommand(f.setup, []string{"install", "--refresh"})
+	if got, _ := os.ReadFile(f.shims()[0]); string(got) != "newer build" {
+		t.Error("refresh replaced a shim the agent manages")
+	}
+}
+
 func TestHelpVersionAndUnknownFlags(t *testing.T) {
 	f := newFakeSetup(t, hostLayout())
 	if code := runCommand(f.setup, []string{"--help"}); code != 0 || !strings.Contains(f.out.String(), "usage: golem-exec") {

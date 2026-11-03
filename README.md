@@ -107,6 +107,12 @@ golem-exec test        # run the self-test again
 golem-exec uninstall   # put Claude Code's shell back (--purge also removes the settings)
 ```
 
+Claude Code runs the copy in `~/.golem/bin`, not the one on your PATH. Homebrew
+updates that copy after each `brew upgrade`. Installed another way, run
+`golem-exec install --refresh` after upgrading: it replaces the installed shim
+and changes nothing else. `man golem-exec` and `man golem-check` describe every
+command and setting; the release archives carry the pages in `man/`.
+
 ## Settings
 
 `~/.golem/shield.json`:

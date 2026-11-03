@@ -31,7 +31,7 @@ archives:
     format_overrides:
       - goos: windows
         formats: [zip]
-    files: [LICENSE, README.md]
+    files: [LICENSE, README.md, man/*.1]
 
 checksum:
   name_template: checksums.txt
@@ -57,16 +57,20 @@ homebrew_casks:
     description: Kernel jail for AI coding agents' shell commands, and a check of their settings
     license: Apache-2.0
     binaries: [golem-exec, golem-check]
+    manpages: [man/golem-exec.1, man/golem-check.1]
     caveats: |
       Run `golem-exec install` to jail every shell command Claude Code runs,
       then restart Claude Code. `golem-check` lists risky agent settings.
     # The binaries are not notarized yet, so Gatekeeper would refuse them.
+    # Claude Code runs the copy `golem-exec install` put in ~/.golem/bin, so an
+    # upgrade refreshes that copy too; it does nothing if none is installed.
     hooks:
       post:
         install_steps: |
           on_macos do
             run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/golem-exec", "{{ .StagedPath }}/golem-check"]
           end
+          run "{{ .StagedPath }}/golem-exec", args: ["install", "--refresh"]
 
 changelog:
   use: github

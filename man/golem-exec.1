@@ -1,0 +1,160 @@
+.TH GOLEM-EXEC 1 2026-11-03 golem-team-shield "User Commands"
+.SH NAME
+golem-exec \- run every shell command an AI coding agent starts inside a kernel jail
+.SH SYNOPSIS
+.B golem-exec install
+.RB [ \-\-strict ]
+.br
+.B golem-exec install \-\-refresh
+.br
+.B golem-exec status
+.br
+.B golem-exec test
+.br
+.B golem-exec uninstall
+.RB [ \-\-purge ]
+.br
+.B golem-exec version
+.br
+.B golem-exec help
+.SH DESCRIPTION
+.B golem-exec
+is a shell shim.
+Claude Code runs it as its shell, and it runs the real shell, with the same
+arguments, inside a kernel jail: Seatbelt on macOS, Landlock and seccomp on
+Linux, a restricted token on Windows.
+Everything the command starts inherits the jail.
+.PP
+Run by its own name it manages that setup.
+Run under a shell's name
+.RB ( golem\-zsh ,
+.BR golem\-bash ,
+or
+.B bash.exe
+on Windows) it is the shim.
+.PP
+With the default settings a jailed command cannot read private SSH and GPG
+keys,
+.IR .netrc ,
+.I .git\-credentials
+or shell history; cannot write to
+.IR ~/.ssh ,
+shell startup files, git config,
+.I ~/Library/LaunchAgents
+or the agents' settings and hooks; and loses secret-shaped environment
+variables.
+It keeps the network, cloud credentials, the SSH agent and the Docker socket.
+.PP
+It jails shell commands only: Claude Code's own Read, Write and fetch tools do
+not run through a shell.
+.SH COMMANDS
+.TP
+.B install
+Copy this binary into
+.I ~/.golem/bin
+under the shell names, write
+.I ~/.golem/shield.json
+if it is missing, point Claude Code at the shim through
+.B CLAUDE_CODE_SHELL
+in
+.I ~/.claude/settings.json
+(on Windows,
+.B CLAUDE_CODE_GIT_BASH_PATH
+and the PowerShell tool turned off), and run the self-test.
+A shell you set in Claude Code yourself is left alone.
+It refuses where the jail cannot be built, and does nothing where the Golem
+agent manages the shield.
+Restart Claude Code afterwards.
+.TP
+.B install \-\-strict
+As
+.BR install ,
+and a new settings file also keeps cloud credentials out of reach.
+.TP
+.B install \-\-refresh
+Replace an installed shim with this binary and change nothing else.
+It does nothing when no shim is installed or the Golem agent manages the
+shield.
+Package managers run it after an upgrade, because Claude Code runs the copy in
+.IR ~/.golem/bin ,
+not the one on your PATH.
+.TP
+.B status
+Show the installed shim, Claude Code's shell setting, whether the jail can be
+built here, the settings file, and the policy commands get.
+.TP
+.B test
+Run a plain command through the shim, which must succeed, and a read of
+.IR ~/.golem ,
+which the jail must deny.
+.TP
+.B uninstall
+Put Claude Code's shell back and remove the shim.
+.B \-\-purge
+also removes the settings and the cached policies.
+.TP
+.B version
+Print the version.
+.SH SETTINGS
+.I ~/.golem/shield.json
+holds the policy every command gets when no Golem agent answers.
+Changes apply to the next command.
+.TP
+.B enforce
+.B false
+runs commands without a jail.
+.TP
+.B lockdown
+Every command loses the network, the SSH agent, Docker, cloud credentials and
+writes outside the project it runs in.
+On Windows, which cannot take the network from a command, commands do not run
+at all.
+.TP
+.BR ssh_agent ", " docker ", " cloud_credentials
+The three grants: the SSH agent and keychain, the Docker socket, and the cloud
+and package-registry credential files and variables.
+.TP
+.BR env_allow ", " env_deny
+Environment variables to keep or remove, each a name or a prefix ending in
+.BR * .
+Lockdown ignores
+.BR env_allow .
+.PP
+A jailed command can neither read nor write
+.IR ~/.golem ,
+so the agent being watched cannot change its own jail.
+A setting this version does not know, or a file that is not valid JSON, locks
+every command down until it is fixed.
+.SH FILES
+.TP
+.I ~/.golem/bin/golem-exec
+The installed shim, with the
+.B golem\-zsh
+and
+.B golem\-bash
+links (on Windows,
+.IR bash.exe ).
+.TP
+.I ~/.golem/shield.json
+The settings.
+.TP
+.I ~/.claude/settings.json
+Where Claude Code is pointed at the shim.
+.SH ENVIRONMENT
+.TP
+.B GOLEM_WITNESS_URL
+Where the Golem agent answers, on this machine only; by default
+http://127.0.0.1:39393.
+With an agent there, it decides each session's policy and
+.I ~/.golem/shield.json
+is not read.
+.SH EXIT STATUS
+0 on success, 1 when a command fails, 2 for a usage error.
+Run as a shell, it exits with the command's status, or 126 when the jail could
+not be built and the command was not run.
+.SH SEE ALSO
+.BR golem\-check (1)
+.PP
+https://github.com/GolemTeam/golem-team-shield
+.br
+https://docs.golem.team/free-tools
