@@ -14,14 +14,22 @@ import (
 	"github.com/GolemTeam/golem-team-shield/agentposture"
 )
 
+// version is set at release (-X main.version=...).
+var version = "dev"
+
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
 func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("golem-check", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	asJSON := fs.Bool("json", false, "print every finding, informational ones included, as JSON")
+	showVersion := fs.Bool("version", false, "print the version")
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+	if *showVersion {
+		fmt.Fprintln(stdout, "golem-check "+version)
+		return 0
 	}
 	items := agentposture.Scan(agentposture.DefaultEnv())
 	if *asJSON {

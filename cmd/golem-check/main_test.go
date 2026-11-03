@@ -57,6 +57,13 @@ func TestJSONListsEveryFinding(t *testing.T) {
 	}
 }
 
+func TestVersion(t *testing.T) {
+	var out, errs bytes.Buffer
+	if code := run([]string{"--version"}, &out, &errs); code != 0 || !strings.HasPrefix(out.String(), "golem-check ") {
+		t.Errorf("exit %d: %q %q", code, out.String(), errs.String())
+	}
+}
+
 func TestAnUnknownFlagIsAUsageError(t *testing.T) {
 	var out, errs bytes.Buffer
 	if code := run([]string{"-nope"}, &out, &errs); code != 2 {

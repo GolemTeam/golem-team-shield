@@ -215,6 +215,20 @@ func TestStatusSaysWhatCommandsGet(t *testing.T) {
 	}
 }
 
+func TestHelpVersionAndUnknownFlags(t *testing.T) {
+	f := newFakeSetup(t, hostLayout())
+	if code := runCommand(f.setup, []string{"--help"}); code != 0 || !strings.Contains(f.out.String(), "usage: golem-exec") {
+		t.Errorf("--help exited %d:\n%s", code, f.out.String())
+	}
+	f.out.Reset()
+	if code := runCommand(f.setup, []string{"--version"}); code != 0 || !strings.HasPrefix(f.out.String(), "golem-exec ") {
+		t.Errorf("--version exited %d: %q", code, f.out.String())
+	}
+	if code := runCommand(f.setup, []string{"-c", "echo hi"}); code != 2 || !strings.Contains(f.errs.String(), "usage: golem-exec") {
+		t.Errorf("-c by its own name exited %d, want the usage and 2:\n%s", code, f.errs.String())
+	}
+}
+
 func TestOnlyItsOwnNameRunsTheCommands(t *testing.T) {
 	for name, want := range map[string]bool{"golem-exec": true, "golem-exec.exe": true, "GOLEM-EXEC.EXE": true, "golem-zsh": false, "bash.exe": false, "bash": false} {
 		if isSelf(name) != want {

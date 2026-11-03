@@ -18,8 +18,8 @@ import (
 )
 
 // Run by its own name, golem-exec sets itself up as Claude Code's shell on a
-// machine with no Golem agent. Run under a shell's name (golem-zsh, golem-bash,
-// bash.exe) it is the shim.
+// machine with no Golem agent, and never acts as a shell. Run under a shell's
+// name (golem-zsh, golem-bash, bash, sh, bash.exe) it is the shim.
 
 const cliUsage = `usage: golem-exec <command>
 
@@ -27,6 +27,7 @@ const cliUsage = `usage: golem-exec <command>
   status               show what is installed and the policy commands get
   test                 check that the jail blocks what it should
   uninstall [--purge]  put Claude Code's shell back (--purge also removes ~/.golem/shield.json)
+  version              print the version
 
 Settings: ~/.golem/shield.json. --strict also keeps cloud credentials out of reach.
 `
@@ -84,6 +85,9 @@ func runCommand(s *setup, args []string) int {
 		return s.test()
 	case "help", "-h", "--help":
 		fmt.Fprint(s.stdout, cliUsage)
+		return 0
+	case "version", "--version":
+		fmt.Fprintln(s.stdout, "golem-exec "+version)
 		return 0
 	}
 	fmt.Fprintf(s.stderr, "golem-exec: unknown command %q\n\n%s", args[0], cliUsage)

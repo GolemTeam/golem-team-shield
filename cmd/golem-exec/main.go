@@ -25,6 +25,9 @@ import (
 // only put on its own process (Landlock, seccomp) before it execs the shell.
 const jailStage = "golem-shield-jail"
 
+// version is set at release (-X main.version=...).
+var version = "dev"
+
 func main() {
 	invoked := filepath.Base(os.Args[0])
 	args := os.Args[1:]
@@ -32,7 +35,7 @@ func main() {
 		os.Exit(runJailStage(args))
 	}
 	witness := witnessURL(os.Getenv("GOLEM_WITNESS_URL"))
-	if isSelf(invoked) && (len(args) == 0 || !strings.HasPrefix(args[0], "-")) {
+	if isSelf(invoked) {
 		os.Exit(runCommand(newSetup(witness), args))
 	}
 
