@@ -34,6 +34,15 @@ and Windows each have a few gaps of their own, listed under
 
 ## Install
 
+### With Homebrew
+
+On macOS or Linux:
+
+```sh
+brew install golemteam/golem-team/golem-team-shield
+golem-exec install
+```
+
 ### From a release
 
 On macOS or Linux:

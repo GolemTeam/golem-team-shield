@@ -24,7 +24,8 @@ builds:
     ldflags: [-s -w]
 
 archives:
-  - ids: [golem-exec, golem-check]
+  - id: shield
+    ids: [golem-exec, golem-check]
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
     formats: [tar.gz]
     format_overrides:
@@ -34,6 +35,37 @@ archives:
 
 checksum:
   name_template: checksums.txt
+
+# The cask in GolemTeam/homebrew-golem-team, so
+# `brew install golemteam/golem-team/golem-team-shield` works. It needs the
+# GORELEASER_TAP_TOKEN secret (write access to that repo only); without it the
+# release still publishes and the cask is skipped.
+homebrew_casks:
+  - name: golem-team-shield
+    ids: [shield]
+    repository:
+      owner: GolemTeam
+      name: homebrew-golem-team
+      token: "{{ .Env.GORELEASER_TAP_TOKEN }}"
+    skip_upload: '{{ if index .Env "GORELEASER_TAP_TOKEN" }}false{{ else }}true{{ end }}'
+    commit_author:
+      name: donlem
+      email: 274921758+donlem@users.noreply.github.com
+    commit_msg_template: "golem-team-shield {{ .Tag }}"
+    homepage: https://github.com/GolemTeam/golem-team-shield
+    description: Kernel jail for AI coding agents' shell commands, and a check of their settings
+    license: Apache-2.0
+    binaries: [golem-exec, golem-check]
+    caveats: |
+      Run `golem-exec install` to jail every shell command Claude Code runs,
+      then restart Claude Code. `golem-check` lists risky agent settings.
+    # The binaries are not notarized yet, so Gatekeeper would refuse them.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/golem-exec", "#{staged_path}/golem-check"]
+          end
 
 changelog:
   use: github
