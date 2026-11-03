@@ -1,6 +1,7 @@
-// golem-check prints the settings that let the AI coding agents on this
-// machine act without asking: permission prompts off, every command allowed,
-// no sandbox. It reads their settings files and sends nothing anywhere.
+// golem-check grades how the AI coding agents on this machine are set up: the
+// settings that let them act without asking, what protects their shells, and
+// the rest of docs/design-golem-check-report.md as it lands. It reads their
+// files and sends nothing anywhere.
 package main
 
 import (
@@ -23,6 +24,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("golem-check", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	asJSON := fs.Bool("json", false, "print every finding, informational ones included, as JSON")
+	withScore := fs.Bool("with-score", false, "with -json, print the grade and area scores beside the findings")
 	showVersion := fs.Bool("version", false, "print the version")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -31,20 +33,30 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "golem-check "+version)
 		return 0
 	}
-	items := agentposture.Scan(agentposture.DefaultEnv())
+	res := agentposture.ScanAll(agentposture.DefaultEnv())
 	if *asJSON {
+		items := res.Items
 		if items == nil {
 			items = []agentposture.Item{}
 		}
+		var doc any = items
+		if *withScore {
+			doc = struct {
+				Score agentposture.Report `json:"score"`
+				Items []agentposture.Item `json:"items"`
+			}{agentposture.Score(res), items}
+		}
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(items); err != nil {
+		if err := enc.Encode(doc); err != nil {
 			fmt.Fprintln(stderr, "golem-check: could not write the report")
 			return 1
 		}
 		return 0
 	}
-	agentposture.WriteReport(stdout, items)
+	agentposture.WriteReport(stdout, res)
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, agentposture.NotRead)
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "Put every shell command your agents run in a kernel jail, and run untrusted repos,")
 	fmt.Fprintln(stdout, "pages and files in a sandbox, free and with no account:")

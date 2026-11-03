@@ -3,6 +3,7 @@ package shield
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"path/filepath"
 	"strings"
 )
@@ -131,7 +132,8 @@ const claudeCwdFile = `/claude-[A-Za-z0-9-]+-cwd$`
 
 // CompileSeatbelt renders p as a macOS sandbox profile. Seatbelt applies the
 // last rule that matches, so the order is the policy: open by default, then
-// the tainted write floor, then the denials that hold in every state.
+// the write floor (tainted, or confined to the workspace), the network
+// confined to the proxy, then the denials that hold in every state.
 func CompileSeatbelt(p Policy, c Context) (string, error) {
 	if err := c.validate(); err != nil {
 		return "", err
@@ -143,13 +145,11 @@ func CompileSeatbelt(p Policy, c Context) (string, error) {
 	b.WriteString("(version 1)\n(allow default)\n")
 	w.bare("deny mach-priv-task-port")
 
-	if p.Tainted() {
+	if roots := writeRoots(p, c, "darwin"); roots != nil {
 		w.bare("deny file-write*")
 		writable := append([]match{}, deviceWrites...)
-		for _, w := range append(append([]string{c.TurnTmp}, c.Workspace...), c.ExtraWrite...) {
-			if w != "" {
-				writable = append(writable, absSub(w))
-			}
+		for _, r := range roots {
+			writable = append(writable, absSub(r))
 		}
 		if c.HarnessTmp != "" {
 			writable = append(writable, absRx("^"+reQuote(darwinPath(c.HarnessTmp))+claudeCwdFile))
@@ -171,7 +171,7 @@ func CompileSeatbelt(p Policy, c Context) (string, error) {
 		}
 	}
 	w.paths("deny file-write*", home, protected)
-	w.paths("deny file-read* file-write*", home, secretStores)
+	w.paths("deny file-read* file-write*", home, append(append([]match{}, secretStores...), darwinAppStores...))
 	readable := append([]match{}, sshReadable...)
 	// Only a socket in ~/.ssh needs letting back: that is the one place the
 	// deny above covers it, and the jail can't write there to swap it for a
@@ -186,6 +186,18 @@ func CompileSeatbelt(p Policy, c Context) (string, error) {
 		}
 	}
 	w.paths("allow file-read*", home, readable)
+	if p.Proxied() {
+		// Seatbelt names no host but localhost, so the allowlist is the
+		// proxy's to enforce; the jail lets nothing else out, DNS included.
+		// Unix sockets stay as the grants below leave them.
+		w.bare("deny network-outbound")
+		w.b.WriteString("(allow network-outbound\n  (remote unix-socket (path-regex #\"^/\"))")
+		if c.ProxyPort > 0 {
+			w.b.WriteString(fmt.Sprintf("\n  (remote ip \"localhost:%d\")", c.ProxyPort))
+		}
+		w.b.WriteString(")\n")
+		w.services(resolverServices)
+	}
 	if !g.Cloud {
 		w.paths("deny file-read* file-write*", home, cloudStores)
 	}

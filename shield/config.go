@@ -35,6 +35,14 @@ type Config struct {
 	// ending in *. Lockdown ignores EnvAllow.
 	EnvAllow []string `json:"env_allow"`
 	EnvDeny  []string `json:"env_deny"`
+	// Writes "workspace" keeps writes to the project, temp, the tool caches
+	// and AllowWrite; "anywhere" leaves them as the baseline has them.
+	Writes     Writes   `json:"writes"`
+	AllowWrite []string `json:"allow_write"`
+	// Network "allowlist" lets commands reach AllowedHosts only, through a
+	// proxy, with everything else refused; "open" leaves the network be.
+	Network      Network  `json:"network"`
+	AllowedHosts []string `json:"allowed_hosts"`
 }
 
 const maxConfigBytes = 64 << 10
@@ -48,15 +56,18 @@ func ConfigPath(home string) string { return filepath.Join(home, ".golem", "shie
 // to edit.
 func DefaultConfig() Config {
 	on := true
-	return Config{Enforce: &on, SSHAgent: &on, Docker: &on, CloudCredentials: &on, EnvAllow: []string{}, EnvDeny: []string{}}
+	return Config{Enforce: &on, SSHAgent: &on, Docker: &on, CloudCredentials: &on, EnvAllow: []string{}, EnvDeny: []string{},
+		Writes: WritesAnywhere, AllowWrite: []string{}, Network: NetworkOpen, AllowedHosts: []string{}}
 }
 
-// StrictConfig is the baseline without the cloud credentials, for a machine
-// whose agents should not reach a cloud account from a shell.
+// StrictConfig is the baseline without the cloud credentials and with writes
+// kept to the workspace, for a machine whose agents should not reach a cloud
+// account from a shell nor leave anything behind outside the project.
 func StrictConfig() Config {
 	c := DefaultConfig()
 	off := false
 	c.CloudCredentials = &off
+	c.Writes = WritesWorkspace
 	return c
 }
 
@@ -83,6 +94,9 @@ func LoadConfig(path string) (c Config, found bool, err error) {
 		if !envPatternRE.MatchString(p) {
 			return Config{}, true, fmt.Errorf("%q is not a variable name or a prefix ending in *", p)
 		}
+	}
+	if err := c.checkConfinement(); err != nil {
+		return Config{}, true, err
 	}
 	return c, true, nil
 }
@@ -113,7 +127,36 @@ func (c Config) Policy() Policy {
 	}
 	p.Grants = Grants{Agent: orTrue(c.SSHAgent), Docker: orTrue(c.Docker), Cloud: orTrue(c.CloudCredentials)}
 	p.EnvAllow, p.EnvDeny = c.EnvAllow, c.EnvDeny
+	p.Writes, p.AllowWrite = c.Writes, c.AllowWrite
+	p.Network, p.AllowedHosts = c.Network, c.AllowedHosts
 	return p
+}
+
+func (c Config) checkConfinement() error {
+	switch c.Writes {
+	case "", WritesAnywhere, WritesWorkspace:
+	default:
+		return fmt.Errorf("writes is %q; it must be \"anywhere\" or \"workspace\"", c.Writes)
+	}
+	switch c.Network {
+	case "", NetworkOpen, NetworkAllowlist:
+	default:
+		return fmt.Errorf("network is %q; it must be \"open\" or \"allowlist\"", c.Network)
+	}
+	if len(c.AllowWrite) > MaxAllowWrite || len(c.AllowedHosts) > MaxAllowedHosts {
+		return fmt.Errorf("at most %d allow_write and %d allowed_hosts entries", MaxAllowWrite, MaxAllowedHosts)
+	}
+	for _, w := range c.AllowWrite {
+		if err := CheckWritePath(w); err != nil {
+			return fmt.Errorf("allow_write: %w", err)
+		}
+	}
+	for _, h := range c.AllowedHosts {
+		if err := CheckHost(h); err != nil {
+			return fmt.Errorf("allowed_hosts: %w", err)
+		}
+	}
+	return nil
 }
 
 func orTrue(b *bool) bool { return b == nil || *b }

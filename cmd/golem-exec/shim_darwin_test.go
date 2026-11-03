@@ -138,3 +138,105 @@ func TestALinkedAgentSocketDoesNotReopenAKey(t *testing.T) {
 		t.Errorf("the key was read through a linked agent socket: %s", out)
 	}
 }
+
+func TestShimKeepsBrowserChatAndMailStoresFromTheCommand(t *testing.T) {
+	skipIfNested(t)
+	w := newFakeWitness(t, shield.Policy{Enforce: true, State: shield.Clean, Grants: shield.AllGrants()})
+	s, stdout, _ := testShim(t, w.URL)
+	lib := filepath.Join(s.home, "Library")
+	for _, f := range []string{
+		"Application Support/Firefox/Profiles/x.default/cookies.sqlite",
+		"Application Support/Google/Chrome/Default/Cookies",
+		"Application Support/Slack/storage/x",
+		"Messages/chat.db",
+		"Mail/V10/x",
+	} {
+		plant(t, filepath.Join(lib, f), "SECRET\n")
+	}
+	plant(t, filepath.Join(s.home, "vault.kdbx"), "SECRET\n")
+	plant(t, filepath.Join(lib, "Application Support/Firefox/Profiles/x.default/extensions/evil.xpi"), "")
+	script := `cd "$HOME/Library"; cat "Application Support/Firefox/Profiles/x.default/cookies.sqlite" "Application Support/Google/Chrome/Default/Cookies"` +
+		` "Application Support/Slack/storage/x" Messages/chat.db Mail/V10/x "$HOME/vault.kdbx";` +
+		` echo x > "Application Support/Firefox/Profiles/x.default/extensions/evil.xpi" && echo PLANTED; echo done`
+	s.run("/bin/zsh", []string{"-c", script})
+	out := stdout.String()
+	if strings.Contains(out, "SECRET") || strings.Contains(out, "PLANTED") || !strings.Contains(out, "done") {
+		t.Errorf("an app's store was reachable: %s", out)
+	}
+}
+
+func TestShimAllowlistedNetworkGoesOnlyThroughItsProxy(t *testing.T) {
+	skipIfNested(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+	other := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
+	w := newFakeWitness(t, shield.Policy{Enforce: true, State: shield.Clean, Grants: shield.AllGrants(),
+		Network: shield.NetworkAllowlist, AllowedHosts: []string{"example.com"}})
+	s, stdout, stderr := testShim(t, w.URL)
+	online := true
+	if _, err := net.LookupHost("example.com"); err != nil {
+		online = false
+	}
+	script := `nc -z -G 2 127.0.0.1 ` + other + ` 2>/dev/null && echo DIRECT; nc -z -G 2 1.1.1.1 443 2>/dev/null && echo PUBLIC;` +
+		` echo "proxy=[$HTTPS_PROXY] node=[$NODE_USE_ENV_PROXY]";` +
+		` curl -s -o /dev/null -w 'evil=%{http_code}\n' https://evil.test/;` +
+		` curl -s -o /dev/null -w 'allowed=%{http_code}\n' --max-time 10 https://example.com/; true`
+	s.run("/bin/zsh", []string{"-c", script})
+	out := stdout.String()
+	if strings.Contains(out, "DIRECT") || strings.Contains(out, "PUBLIC") {
+		t.Errorf("a connection went around the proxy: %s", out)
+	}
+	if !strings.Contains(out, "proxy=[http://127.0.0.1:") || !strings.Contains(out, "node=[1]") {
+		t.Errorf("proxy variables: %s", out)
+	}
+	if !strings.Contains(stderr.String(), "the shield refused evil.test:443: not in the allowed hosts.") {
+		t.Errorf("the refusal wasn't named on stderr: %s", stderr)
+	}
+	if online && !strings.Contains(out, "allowed=200") {
+		t.Errorf("an allowed host didn't load through the proxy: %s", out)
+	}
+	if len(w.runs) != 1 {
+		t.Fatalf("runs %d", len(w.runs))
+	}
+	rec := w.runs[0]
+	if rec.Net != shield.NetSeatbelt || len(rec.Egress) == 0 || rec.Egress[0].Host != "evil.test" || rec.Egress[0].Allowed {
+		t.Errorf("run record net %q egress %+v", rec.Net, rec.Egress)
+	}
+}
+
+func TestShimWorkspaceWritesStayInTheRoots(t *testing.T) {
+	skipIfNested(t)
+	w := newFakeWitness(t, shield.Policy{Enforce: true, State: shield.Clean, Grants: shield.AllGrants(), Writes: shield.WritesWorkspace})
+	s, stdout, _ := testShim(t, w.URL)
+	plant(t, filepath.Join(s.home, "notes"), "")
+	plant(t, filepath.Join(s.home, "Library", "Preferences", "x.plist"), "")
+	s.cwd = filepath.Join(s.cwd, "repo")
+	plant(t, filepath.Join(s.cwd, ".git", "HEAD"), "ref: refs/heads/main\n")
+	script := `cd "` + s.cwd + `"; echo x > ws.txt && echo WS; echo x > $TMPDIR/t && echo TMP; mkdir -p $HOME/Library/Caches/x && echo CACHE;` +
+		` echo x >> $HOME/notes && echo HOMEWRITE; true`
+	s.run("/bin/zsh", []string{"-c", script})
+	got := stdout.String()
+	for _, want := range []string{"WS", "TMP", "CACHE"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("%s wasn't writable: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "HOMEWRITE") {
+		t.Errorf("a write left the roots: %s", got)
+	}
+	if len(w.runs) != 1 || w.runs[0].Writes != "workspace" {
+		t.Errorf("runs %+v", w.runs)
+	}
+}

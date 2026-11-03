@@ -223,3 +223,53 @@ func TestStripJSONCKeepsStrings(t *testing.T) {
 		t.Errorf("stripJSONC = %q", got)
 	}
 }
+
+func TestEachAgentsOwnSandboxIsCredited(t *testing.T) {
+	env := postureTestEnv(t)
+	writePostureFile(t, filepath.Join(env.Home, ".claude", "settings.json"), `{"sandbox": {"enabled": true}}`)
+	writePostureFile(t, filepath.Join(env.Home, ".codex", "config.toml"), "model = \"x\"\n")
+	writePostureFile(t, filepath.Join(env.Home, ".cursor", "cli-config.json"), `{"sandbox": {"mode": "enabled"}}`)
+	writePostureFile(t, filepath.Join(env.Home, ".gemini", "settings.json"), `{"tools": {"sandbox": "docker"}}`)
+
+	res := ScanAll(env)
+	got := postureByKey(res.Items)
+	for _, k := range []postureKey{
+		{"claude-code", "agent_sandbox", "user"}, {"codex", "agent_sandbox", "user"},
+		{"cursor", "agent_sandbox", "user"}, {"gemini-cli", "agent_sandbox", "user"},
+	} {
+		if it, ok := got[k]; !ok || it.Area != AreaProtections || it.Severity != Info {
+			t.Errorf("%v: %+v in %+v", k, it, res.Items)
+		}
+	}
+	if has(got, postureKey{"claude-code", "no_sandbox", "user"}) {
+		t.Error("a sandboxed Claude Code is also reported as not sandboxed")
+	}
+	if strings.Join(res.Agents, ",") != "claude-code,codex,cursor,gemini-cli" {
+		t.Errorf("agents %v", res.Agents)
+	}
+	if a := area(Score(res), AreaProtections); a.Score != 75 {
+		t.Errorf("protections %+v", a)
+	}
+}
+
+func TestCodexWithFullAccessGetsNoSandboxCredit(t *testing.T) {
+	env := postureTestEnv(t)
+	writePostureFile(t, filepath.Join(env.Home, ".codex", "config.toml"), "sandbox_mode = \"danger-full-access\"\n")
+	got := postureByKey(Scan(env))
+	if has(got, postureKey{"codex", "agent_sandbox", "user"}) || !has(got, postureKey{"codex", "full_access", "user"}) {
+		t.Errorf("got %+v", got)
+	}
+}
+
+func TestEveryItemHasAnArea(t *testing.T) {
+	env := postureTestEnv(t)
+	writePostureFile(t, filepath.Join(env.Home, ".claude", "settings.json"), `{"permissions": {"defaultMode": "bypassPermissions", "allow": ["Bash"]}}`)
+	for _, it := range Scan(env) {
+		if it.Area == "" {
+			t.Errorf("%+v has no area", it)
+		}
+		if it.Check == "shell_allowed" && it.Area != AreaPermissions {
+			t.Errorf("shell_allowed is in %s", it.Area)
+		}
+	}
+}

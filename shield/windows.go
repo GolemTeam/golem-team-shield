@@ -54,6 +54,10 @@ type WindowsACE struct {
 	Path    string `json:"path"`
 	Deny    uint32 `json:"deny"`
 	Inherit bool   `json:"inherit,omitempty"`
+	// Optional: a command still runs when this entry can't be put in place.
+	// An app's own store can be held open by the app while it runs, and
+	// failing every command for that would leave the jail switched off.
+	Optional bool `json:"optional,omitempty"`
 }
 
 // WindowsJail is the compiled Windows policy.
@@ -123,9 +127,11 @@ func CompileWindows(p Policy, c Context) (WindowsJail, error) {
 	}
 	g := p.Effective()
 	acl := map[string]WindowsACE{}
+	optional := false
 	add := func(path string, deny uint32, inherit bool) {
-		e := acl[path]
+		e, seen := acl[path]
 		e.Path, e.Deny, e.Inherit = path, e.Deny|deny, e.Inherit || inherit
+		e.Optional = optional && (!seen || e.Optional)
 		acl[path] = e
 	}
 	// A credential store that isn't there has nothing to read, so only a
@@ -168,6 +174,9 @@ func CompileWindows(p Policy, c Context) (WindowsJail, error) {
 		}
 	}
 	place(ssh, WinDenyRead|WinDenyWrite)
+	optional = true
+	place(windowsAppStores, WinDenyRead|WinDenyWrite)
+	optional = false
 	place(append(append([]match{}, protectedWrites...), windowsProtectedWrites...), WinDenyWrite)
 	place([]match{sub(".ssh")}, WinDenyWrite)
 	for _, k := range sshKeys(c.Home, c.SSHReadable) {

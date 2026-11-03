@@ -39,7 +39,9 @@ func main() {
 		os.Exit(runCommand(newSetup(witness), args))
 	}
 
-	if invoked == "bash" || invoked == "sh" {
+	// Under the old PATH names it asks the policy-check; a hook's rewrite
+	// (~/.golem/bin/hook/bash) was already checked by that hook.
+	if (invoked == "bash" || invoked == "sh") && filepath.Base(filepath.Dir(os.Args[0])) != "hook" {
 		cmdline := strings.TrimSpace(invoked + " " + strings.Join(args, " "))
 		if denied, reason := policyCheck(witness, cmdline, invoked); denied {
 			fmt.Fprintf(os.Stderr, "golem-exec: blocked by Golem policy: %s\n", reason)

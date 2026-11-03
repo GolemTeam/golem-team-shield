@@ -77,6 +77,11 @@ func TestInstallSetsUpTheShimTheSettingsAndClaudeCode(t *testing.T) {
 	if dest, _ := os.Readlink(filepath.Join(f.binDir(), "golem-zsh")); dest != "golem-exec" {
 		t.Errorf("golem-zsh -> %q", dest)
 	}
+	for _, name := range shield.HookShells {
+		if dest, _ := os.Readlink(filepath.Join(shield.HookShimDir(f.home), name)); dest != filepath.Join("..", "golem-exec") {
+			t.Errorf("hook/%s -> %q", name, dest)
+		}
+	}
 	if got := f.settingsEnv(t)["CLAUDE_CODE_SHELL"]; got != filepath.Join(f.binDir(), "golem-zsh") {
 		t.Errorf("CLAUDE_CODE_SHELL = %q", got)
 	}
@@ -100,8 +105,8 @@ func TestStrictKeepsTheCloudCredentialsOut(t *testing.T) {
 	if code := f.install(true); code != 0 {
 		t.Fatalf("exit %d: %s", code, f.errs.String())
 	}
-	if cfg, _, _ := shield.LoadConfig(shield.ConfigPath(f.home)); cfg.Policy().Grants.Cloud {
-		t.Error("--strict left the cloud credentials on")
+	if cfg, _, _ := shield.LoadConfig(shield.ConfigPath(f.home)); cfg.Policy().Grants.Cloud || !cfg.Policy().ConfinedWrites() {
+		t.Errorf("--strict left the cloud credentials on or writes open: %+v", cfg)
 	}
 	if got := f.settingsEnv(t)["CLAUDE_CODE_SHELL"]; filepath.Base(got) != "golem-bash" {
 		t.Errorf("a bash user got %q", got)
@@ -178,7 +183,7 @@ func TestUninstallPutsClaudeCodeBack(t *testing.T) {
 	if strings.TrimSpace(string(b)) != "{\n  \"model\": \"x\"\n}" {
 		t.Errorf("settings after uninstall: %s", b)
 	}
-	for _, p := range append(f.shims(), filepath.Join(f.binDir(), "golem-exec"), shield.ConfigPath(f.home)) {
+	for _, p := range append(f.shims(), filepath.Join(f.binDir(), "golem-exec"), shield.ConfigPath(f.home), shield.HookShimDir(f.home)) {
 		if _, err := os.Lstat(p); err == nil {
 			t.Errorf("%s is still there", p)
 		}
@@ -211,6 +216,33 @@ func TestStatusSaysWhatCommandsGet(t *testing.T) {
 	for _, want := range []string{"(jailed)", "lockdown on", "cloud credentials off"} {
 		if !strings.Contains(f.out.String(), want) {
 			t.Errorf("missing %q:\n%s", want, f.out.String())
+		}
+	}
+}
+
+func TestStatusSaysWhereCommandsWriteAndWhatTheyReach(t *testing.T) {
+	cases := []struct {
+		goos string
+		cfg  shield.Config
+		want []string
+	}{
+		{"darwin", shield.DefaultConfig(), []string{"writes       anywhere but the protected files", "network      open"}},
+		{"darwin", shield.Config{Writes: shield.WritesWorkspace, AllowWrite: []string{"~/go/bin"}, Network: shield.NetworkAllowlist, AllowedHosts: []string{"github.com", "*.npmjs.org"}},
+			[]string{"the project, temp and tool caches, and ~/go/bin", "allowed hosts only, through a proxy: github.com, *.npmjs.org"}},
+		{"linux", shield.Config{Network: shield.NetworkAllowlist}, []string{"none yet", "Landlock's port rule"}},
+		{"windows", shield.Config{Writes: shield.WritesWorkspace, Network: shield.NetworkAllowlist}, []string{"Windows can't hold it yet", "binds only those that use it"}},
+		{"darwin", shield.Config{Lockdown: true, Network: shield.NetworkAllowlist}, []string{"network      none (lockdown)"}},
+	}
+	for _, c := range cases {
+		f := newFakeSetup(t, c.goos)
+		if err := shield.WriteConfig(shield.ConfigPath(f.home), c.cfg); err != nil {
+			t.Fatal(err)
+		}
+		f.status()
+		for _, w := range c.want {
+			if !strings.Contains(f.out.String(), w) {
+				t.Errorf("%s %+v: missing %q:\n%s", c.goos, c.cfg, w, f.out.String())
+			}
 		}
 	}
 }

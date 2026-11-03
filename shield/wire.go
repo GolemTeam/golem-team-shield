@@ -28,6 +28,23 @@ const (
 	JailNone Jail = "none"
 )
 
+// NetMode says how an allowlisted network was held.
+type NetMode string
+
+const (
+	NetSeatbelt NetMode = "seatbelt"
+	// NetNamespace: a network namespace where only the proxy answers (Linux).
+	NetNamespace NetMode = "namespace"
+	// NetLandlockPort: Landlock allowed TCP to the proxy's port and nothing
+	// else, so a program ignoring the proxy can reach any host on that port.
+	NetLandlockPort NetMode = "landlock-port"
+	// NetNone: no way to confine it to the proxy, so no network at all.
+	NetNone NetMode = "none"
+	// NetAdvisory: the proxy variables only; nothing refuses a program that
+	// ignores them (Windows).
+	NetAdvisory NetMode = "advisory"
+)
+
 // RunRecord is what the shim reports after the command exits. It never
 // carries output or environment values, only names and hashes.
 type RunRecord struct {
@@ -42,4 +59,13 @@ type RunRecord struct {
 	ExitCode    int      `json:"exit_code"`
 	DurationMS  int64    `json:"duration_ms"`
 	DroppedEnv  []string `json:"dropped_env,omitempty"`
+	// Writes is "workspace" when the jail kept a clean session's writes to
+	// its roots, and "deny-list" when the policy asked for that and the jail
+	// could not (Windows).
+	Writes string `json:"writes,omitempty"`
+	// Net is how an allowlisted network was held; Egress what the proxy saw,
+	// and EgressOverflow how many more distinct requests it only counted.
+	Net            NetMode        `json:"net,omitempty"`
+	Egress         []EgressRecord `json:"egress,omitempty"`
+	EgressOverflow int            `json:"egress_overflow,omitempty"`
 }

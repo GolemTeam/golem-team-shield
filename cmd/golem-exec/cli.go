@@ -30,7 +30,8 @@ const cliUsage = `usage: golem-exec <command>
   uninstall [--purge]  put Claude Code's shell back (--purge also removes ~/.golem/shield.json)
   version              print the version
 
-Settings: ~/.golem/shield.json. --strict also keeps cloud credentials out of reach.
+Settings: ~/.golem/shield.json. --strict also keeps cloud credentials out of reach
+and keeps writes to the project, temp and tool caches ("writes": "workspace").
 `
 
 func isSelf(invoked string) bool {
@@ -178,7 +179,7 @@ func (s *setup) install(strict bool) int {
 	} else if err != nil {
 		fmt.Fprintf(s.stderr, "golem-exec: %s is not valid (%v); every command is locked down until it is fixed\n", cfgPath, err)
 	} else if strict {
-		fmt.Fprintf(s.stdout, "Kept your settings in %s; set \"cloud_credentials\": false there for --strict\n", cfgPath)
+		fmt.Fprintf(s.stdout, "Kept your settings in %s; set \"cloud_credentials\": false and \"writes\": \"workspace\" there for --strict\n", cfgPath)
 	}
 
 	code := 0
@@ -250,15 +251,11 @@ func (s *setup) installShims() error {
 		}
 	}
 	for _, link := range s.shims() {
-		if dest, err := os.Readlink(link); err == nil && dest == "golem-exec" {
-			continue
-		}
-		_ = os.Remove(link)
-		if err := os.Symlink("golem-exec", link); err != nil {
+		if err := shield.LinkShim(link, "golem-exec"); err != nil {
 			return err
 		}
 	}
-	return nil
+	return shield.LinkHookShims(s.binDir(), "golem-exec")
 }
 
 func writeExecutable(path string, bin []byte) error {
@@ -327,6 +324,7 @@ func (s *setup) uninstall(purge bool) int {
 			fmt.Fprintf(s.stdout, "Claude Code: %s\n", c)
 		}
 	}
+	_ = os.RemoveAll(shield.HookShimDir(s.home))
 	for _, p := range append(s.shims(), filepath.Join(s.binDir(), "golem-exec")) {
 		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
 			fmt.Fprintf(s.stderr, "golem-exec: could not remove %s: %v\n", p, err)
@@ -384,7 +382,45 @@ func (s *setup) status() int {
 	if len(p.EnvAllow)+len(p.EnvDeny) > 0 {
 		fmt.Fprintf(s.stdout, "             env allow %v, deny %v\n", p.EnvAllow, p.EnvDeny)
 	}
+	s.statusConfinement(p)
 	return 0
+}
+
+// statusConfinement says where commands may write and what they may reach,
+// and where this system can't hold that.
+func (s *setup) statusConfinement(p shield.Policy) {
+	switch {
+	case p.Tainted():
+		fmt.Fprintln(s.stdout, "writes       the project and temp only (lockdown)")
+		fmt.Fprintln(s.stdout, "network      none (lockdown)")
+		return
+	case p.ConfinedWrites() && s.goos == "windows":
+		fmt.Fprintln(s.stdout, "writes       workspace asked for, but Windows can't hold it yet: anywhere but the protected files")
+	case p.ConfinedWrites():
+		extra := ""
+		if len(p.AllowWrite) > 0 {
+			extra = fmt.Sprintf(", and %s", strings.Join(p.AllowWrite, ", "))
+		}
+		fmt.Fprintf(s.stdout, "writes       the project, temp and tool caches%s\n", extra)
+	default:
+		fmt.Fprintln(s.stdout, "writes       anywhere but the protected files")
+	}
+	if !p.Proxied() {
+		fmt.Fprintln(s.stdout, "network      open")
+		return
+	}
+	hosts := "none yet: add them to \"allowed_hosts\""
+	if len(p.AllowedHosts) > 0 {
+		hosts = strings.Join(p.AllowedHosts, ", ")
+	}
+	fmt.Fprintf(s.stdout, "network      allowed hosts only, through a proxy: %s\n", hosts)
+	switch s.goos {
+	case "windows":
+		fmt.Fprintln(s.stdout, "             Windows can't refuse a program that ignores the proxy, so this binds only those that use it")
+	case "linux":
+		fmt.Fprintln(s.stdout, "             held by a network namespace, or where the kernel allows none, by Landlock's port rule,")
+		fmt.Fprintln(s.stdout, "             which lets a program that ignores the proxy reach any host on the proxy's port")
+	}
 }
 
 // test runs two commands through the installed shim: one must run, and one

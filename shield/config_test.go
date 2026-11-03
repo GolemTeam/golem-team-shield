@@ -25,9 +25,13 @@ func TestAnEmptyConfigIsTheBaseline(t *testing.T) {
 	}
 }
 
-func TestStrictTakesTheCloudCredentialsAway(t *testing.T) {
-	if g := StrictConfig().Policy().Grants; g.Cloud || !g.Agent || !g.Docker {
+func TestStrictTakesTheCloudCredentialsAwayAndKeepsWritesToTheWorkspace(t *testing.T) {
+	p := StrictConfig().Policy()
+	if g := p.Grants; g.Cloud || !g.Agent || !g.Docker {
 		t.Errorf("strict grants %+v", g)
+	}
+	if !p.ConfinedWrites() || p.Proxied() {
+		t.Errorf("strict policy %+v", p)
 	}
 }
 
@@ -44,7 +48,7 @@ func TestDefaultConfigNamesEverySetting(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(path)
-	for _, key := range []string{"enforce", "lockdown", "ssh_agent", "docker", "cloud_credentials", "env_allow", "env_deny"} {
+	for _, key := range []string{"enforce", "lockdown", "ssh_agent", "docker", "cloud_credentials", "env_allow", "env_deny", "writes", "allow_write", "network", "allowed_hosts"} {
 		if !strings.Contains(string(b), `"`+key+`"`) {
 			t.Errorf("%s is missing from the default file:\n%s", key, b)
 		}
@@ -62,6 +66,8 @@ func TestConfigRoundTripsAndRefusesWhatItDoesNotKnow(t *testing.T) {
 	want := StrictConfig()
 	want.EnvAllow = []string{"MY_TOKEN"}
 	want.EnvDeny = []string{"INTERNAL_*"}
+	want.Network, want.AllowedHosts = NetworkAllowlist, []string{"github.com", "*.npmjs.org"}
+	want.AllowWrite = []string{"~/go/bin"}
 	if err := WriteConfig(path, want); err != nil {
 		t.Fatal(err)
 	}
@@ -77,6 +83,11 @@ func TestConfigRoundTripsAndRefusesWhatItDoesNotKnow(t *testing.T) {
 		"not JSON":           `{"enforce": tru}`,
 		"a bad env pattern":  `{"env_allow": ["*"]}`,
 		"a pattern with a =": `{"env_deny": ["A=B"]}`,
+		"an unknown writes":  `{"writes": "nowhere"}`,
+		"an unknown network": `{"network": "closed"}`,
+		"a URL for a host":   `{"allowed_hosts": ["https://github.com"]}`,
+		"a relative path":    `{"allow_write": ["build"]}`,
+		"home itself":        `{"allow_write": ["~/"]}`,
 	} {
 		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 			t.Fatal(err)

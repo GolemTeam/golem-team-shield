@@ -23,13 +23,24 @@ do with the default settings:
 | Denied | Still allowed |
 |---|---|
 | Reading private SSH and GPG keys, `.netrc`, `.git-credentials` and shell history | The network |
+| Reading or writing browser profiles (cookies, saved logins), chat apps (Slack, Discord, Teams, Signal, Telegram, WhatsApp), password managers' data (1Password, Bitwarden, `pass`), mail and Messages | |
 | Writing to `~/.ssh`, your shell startup files, git config, `~/Library/LaunchAgents`, and the agents' settings and hooks | Cloud credentials: `~/.aws`, gcloud, Azure, kube, and Docker, npm and PyPI logins (turn these off with `--strict`) |
 | Secret-shaped environment variables (`*TOKEN*`, `*SECRET*`, `*API_KEY*`, `GH_*`, `ANTHROPIC_*`, `OPENAI_*` and others), which are removed | The SSH agent, the keychain and the Docker socket |
 | Reading or writing `~/.golem`, where the jail's own settings live | Everything else in your home directory and your projects |
 
-So it stops the obvious theft and persistence. It does not stop a command from
-sending what it can read to the internet. Lockdown does (see
-[Settings](#settings)), at the cost of the network for every command.
+So it stops the obvious theft and persistence. With the default settings it
+does not stop a command from sending what it can read to the internet. Two
+settings tighten it, as far as Claude Code's own sandbox goes or further:
+
+- `"network": "allowlist"` lets commands reach only the hosts in
+  `allowed_hosts`, through a proxy `golem-exec` runs for each command.
+  Anything that ignores the proxy, DNS included, is refused by the kernel. A
+  refused host is named in the command's output.
+- `"writes": "workspace"` keeps writes to the project, temp and the tool
+  caches (`~/.cache`, `~/.npm`, `~/go/pkg/mod`, `~/Library/Caches` and
+  others), plus `allow_write`. `--strict` turns it on.
+
+Lockdown takes the network away entirely (see [Settings](#settings)).
 
 It jails shell commands only. Claude Code's own Read, Write and fetch tools
 don't go through a shell, so they are not jailed. For now it works with Claude
@@ -130,7 +141,11 @@ command and setting; the release archives carry the pages in `man/`.
   "docker": true,
   "cloud_credentials": true,
   "env_allow": [],
-  "env_deny": []
+  "env_deny": [],
+  "writes": "anywhere",
+  "allow_write": [],
+  "network": "open",
+  "allowed_hosts": []
 }
 ```
 
@@ -143,6 +158,10 @@ command and setting; the release archives carry the pages in `man/`.
 | `cloud_credentials` | `~/.aws`, gcloud, Azure, kube and the Docker, npm and PyPI logins, and the cloud tools' variables (`AWS_*`, `KUBECONFIG` and others). `golem-exec install --strict` writes `false`. |
 | `env_allow` | Secret-shaped variables to keep, by name or as a `PREFIX*`. Ignored in lockdown. |
 | `env_deny` | Variables to remove, by name or as a `PREFIX*`. |
+| `writes` | `"workspace"` keeps writes to the project, temp, the tool caches and `allow_write`; `"anywhere"` (the default) denies only the protected files. `--strict` writes `"workspace"`. On Windows writes stay as `"anywhere"` for now. |
+| `allow_write` | More places a `"workspace"` command may write: absolute paths or `~/…`, such as `~/go/bin`. One that holds your home directory is ignored. |
+| `network` | `"allowlist"` lets commands reach only `allowed_hosts`, through a proxy; everything else, DNS included, is refused. `"open"` (the default) leaves the network alone. On Linux it uses a network namespace, or where the kernel allows none, Landlock's port rule, which lets a program that ignores the proxy reach any host on the proxy's port. On Windows only programs that use the proxy are held to the list. |
+| `allowed_hosts` | `example.com`, `*.example.com` (its subdomains) or `*` (any public host, everything recorded). Any port. Loopback and the cloud metadata address are never reachable. |
 
 Changes apply to the next command; there is nothing to restart. The jail can
 neither read nor write `~/.golem`, so the agent being watched can't loosen its

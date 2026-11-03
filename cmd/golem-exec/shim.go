@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -16,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -43,6 +45,15 @@ type shim struct {
 	// canJail reports whether this platform's jail can be applied here.
 	canJail func() bool
 	now     func() time.Time
+
+	// standalone: the policy came from ~/.golem/shield.json or the baseline,
+	// not the Golem agent, so a refused host is allowed in that file.
+	standalone bool
+	proxy      *shield.Proxy
+	proxyPort  int
+	// noNamespace skips the Linux network namespace, for tests of the
+	// fallback.
+	noNamespace bool
 }
 
 func newShim(witness string) *shim {
@@ -73,14 +84,7 @@ func (s *shim) getenv(name string) string {
 }
 
 func (s *shim) run(shell string, args []string) int {
-	sessionID := s.getenv("CLAUDE_CODE_SESSION_ID")
-	if !sessionIDRE.MatchString(sessionID) {
-		sessionID = ""
-	}
-	agentID := ""
-	if s.getenv("CLAUDECODE") == "1" {
-		agentID = "claude-code"
-	}
+	sessionID, agentID := sessionFromEnv(s.getenv, s.home, s.cwd, s.now())
 	tag := newRunTag()
 	policy, fromWitness := s.policy(shield.PolicyRequest{SessionID: sessionID, AgentID: agentID, RunTag: tag, CWD: s.cwd})
 
@@ -97,6 +101,14 @@ func (s *shim) run(shell string, args []string) int {
 	tmp = realPath(tmp)
 
 	env, dropped := shield.FilterEnv(s.env, policy, tmp)
+	if policy.Proxied() {
+		if err := s.startProxy(policy); err != nil {
+			fmt.Fprintln(s.stderr, "golem-exec: can't start the shield's proxy for this command; not running it")
+			return 126
+		}
+		defer s.proxy.Close()
+		env = proxyEnv(env, s.proxyPort)
+	}
 	rec := shield.RunRecord{
 		SessionID: sessionID, AgentID: agentID, RunTag: tag,
 		State: policy.State, Grants: policy.Effective(), FromWitness: fromWitness, DroppedEnv: dropped,
@@ -108,6 +120,10 @@ func (s *shim) run(shell string, args []string) int {
 		return 126
 	}
 	rec.DurationMS = s.now().Sub(start).Milliseconds()
+	if s.proxy != nil {
+		rec.Egress, rec.EgressOverflow = s.proxy.Records()
+		s.tellRefused(rec.Egress)
+	}
 	if fromWitness {
 		s.report(rec)
 	}
@@ -122,7 +138,9 @@ func (s *shim) context(tmp, tag string) shield.Context {
 		TurnTmp:     tmp,
 		AgentSocket: agentSocket(s.getenv("SSH_AUTH_SOCK")),
 		RunTag:      tag,
+		ProxyPort:   s.proxyPort,
 	}
+	c.SystemTmp = s.systemTmp()
 	c.SSHReadable = shield.SSHReadable(c.Home)
 	ws := shield.FindWorkspace(realPath(s.cwd))
 	for _, w := range ws.Writable {
@@ -143,6 +161,84 @@ func (s *shim) context(tmp, tag string) shield.Context {
 		c.HarnessTmp = realPath(harness)
 	}
 	return c
+}
+
+// systemTmp are the temp directories a command confined to the workspace may
+// still write: TMPDIR as the agent set it, and /tmp.
+func (s *shim) systemTmp() []string {
+	var out []string
+	for _, d := range []string{s.getenv("TMPDIR"), "/tmp"} {
+		if d == "" || !filepath.IsAbs(d) {
+			continue
+		}
+		if fi, err := os.Stat(d); err == nil && fi.IsDir() {
+			if r := realPath(d); r != realPath(s.home) && !holds(r, realPath(s.home)) {
+				out = append(out, r)
+			}
+		}
+	}
+	return out
+}
+
+const (
+	agentHostsHint      = "Allow it in the console: Sandbox → Settings → Allowed hosts."
+	standaloneHostsHint = `Add it to "allowed_hosts" in ~/.golem/shield.json.`
+	maxRefusedLines     = 5
+)
+
+// startProxy listens for this command's proxy on a fresh loopback port, the
+// only one its jail lets it reach.
+func (s *shim) startProxy(p shield.Policy) error {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return err
+	}
+	s.proxy = shield.NewProxy(p.AllowedHosts)
+	s.proxy.Hint = agentHostsHint
+	if s.standalone {
+		s.proxy.Hint = standaloneHostsHint
+	}
+	s.proxyPort = ln.Addr().(*net.TCPAddr).Port
+	s.proxy.Serve(ln)
+	return nil
+}
+
+var proxyVars = []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"}
+
+// proxyEnv points every proxy variable at the command's proxy and clears
+// NO_PROXY, which would send a host around it to be refused. Node honours the
+// variables only with NODE_USE_ENV_PROXY.
+func proxyEnv(env []string, port int) []string {
+	out := env[:0:0]
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if slices.Contains(proxyVars, strings.ToUpper(name)) || name == "NODE_USE_ENV_PROXY" {
+			continue
+		}
+		out = append(out, kv)
+	}
+	url := fmt.Sprintf("http://127.0.0.1:%d", port)
+	for _, v := range proxyVars[:3] {
+		out = append(out, v+"="+url, strings.ToLower(v)+"="+url)
+	}
+	return append(out, "NODE_USE_ENV_PROXY=1")
+}
+
+// tellRefused names each host the proxy refused on the command's stderr, which
+// is what the agent reads, since many tools don't print a proxy's answer.
+func (s *shim) tellRefused(recs []shield.EgressRecord) {
+	n := 0
+	for _, r := range recs {
+		if r.Allowed {
+			continue
+		}
+		if n++; n <= maxRefusedLines {
+			fmt.Fprintln(s.stderr, s.proxy.RefusedLine(r))
+		}
+	}
+	if n > maxRefusedLines {
+		fmt.Fprintf(s.stderr, "golem-exec: and %d more refused.\n", n-maxRefusedLines)
+	}
 }
 
 // withoutWorkspace is the context to compile when this machine's paths didn't
@@ -186,6 +282,7 @@ func (s *shim) policy(req shield.PolicyRequest) (shield.Policy, bool) {
 // file. A file that cannot be followed gets lockdown, and says so on every
 // command until it is fixed.
 func (s *shim) configPolicy() shield.Policy {
+	s.standalone = true
 	c, found, err := shield.LoadConfig(shield.ConfigPath(s.home))
 	if !found {
 		return shield.Baseline()
@@ -299,13 +396,23 @@ func (s *shim) child(argv []string, env []string) int {
 
 // start runs cmd as child does; started, if set, runs once it has.
 func (s *shim) start(cmd *exec.Cmd, env []string, started func()) int {
+	code, err := s.tryStart(cmd, env, started)
+	if err != nil {
+		fmt.Fprintln(s.stderr, "golem-exec: can't start the shell")
+		return 127
+	}
+	return code
+}
+
+// tryStart is start for a caller with another way to run the command when
+// this one can't start, such as without a namespace.
+func (s *shim) tryStart(cmd *exec.Cmd, env []string, started func()) (int, error) {
 	cmd.Env, cmd.Stdin, cmd.Stdout, cmd.Stderr = env, s.stdin, s.stdout, s.stderr
 	sigs := make(chan os.Signal, 8)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
 	defer signal.Stop(sigs)
 	if err := cmd.Start(); err != nil {
-		fmt.Fprintln(s.stderr, "golem-exec: can't start the shell")
-		return 127
+		return 0, err
 	}
 	if started != nil {
 		started()
@@ -323,7 +430,7 @@ func (s *shim) start(cmd *exec.Cmd, env []string, started func()) int {
 	}()
 	err := cmd.Wait()
 	close(done)
-	return exitCode(cmd, err)
+	return exitCode(cmd, err), nil
 }
 
 func exitCode(cmd *exec.Cmd, err error) int {

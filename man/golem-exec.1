@@ -37,7 +37,8 @@ With the default settings a jailed command cannot read private SSH and GPG
 keys,
 .IR .netrc ,
 .I .git\-credentials
-or shell history; cannot write to
+or shell history; cannot read or write browser profiles, chat apps,
+password managers' data, mail or Messages; cannot write to
 .IR ~/.ssh ,
 shell startup files, git config,
 .I ~/Library/LaunchAgents
@@ -69,7 +70,9 @@ Restart Claude Code afterwards.
 .B install \-\-strict
 As
 .BR install ,
-and a new settings file also keeps cloud credentials out of reach.
+and a new settings file also keeps cloud credentials out of reach and writes
+to the project
+.RB ( "\(dqwrites\(dq: \(dqworkspace\(dq" ).
 .TP
 .B install \-\-refresh
 Replace an installed shim with this binary and change nothing else.
@@ -119,6 +122,48 @@ Environment variables to keep or remove, each a name or a prefix ending in
 .BR * .
 Lockdown ignores
 .BR env_allow .
+.TP
+.B writes
+.B \(dqworkspace\(dq
+keeps writes to the project, temp, the tool caches
+.RI ( ~/.cache ", " ~/.npm ", " ~/go/pkg/mod ", " ~/Library/Caches
+and others) and
+.BR allow_write ;
+.B \(dqanywhere\(dq
+denies only the protected files.
+Windows keeps
+.B \(dqanywhere\(dq
+for now.
+.TP
+.B allow_write
+More places a
+.B \(dqworkspace\(dq
+command may write: absolute paths, or paths under
+.IR ~/ .
+.TP
+.B network
+.B \(dqallowlist\(dq
+lets commands reach only
+.BR allowed_hosts ,
+through a proxy
+.B golem\-exec
+runs for each command; every other connection, DNS included, is refused, and a
+refused host is named on the command's standard error.
+.B \(dqopen\(dq
+leaves the network alone.
+On Linux a network namespace holds it, or where the kernel allows none,
+Landlock's port rule, which lets a program that ignores the proxy reach any host
+on the proxy's port.
+On Windows only programs that use the proxy are held to the list.
+.TP
+.B allowed_hosts
+Each
+.IR example.com ,
+.I *.example.com
+(its subdomains) or
+.B *
+(any public host).
+Loopback and link-local addresses are never reached.
 .PP
 A jailed command can neither read nor write
 .IR ~/.golem ,

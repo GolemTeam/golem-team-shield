@@ -72,3 +72,28 @@ func TestWindowsLockedDownSessionRunsNothing(t *testing.T) {
 		t.Fatalf("exit %d: %s", code, stdout.String())
 	}
 }
+
+func TestWindowsShimKeepsBrowserAndChatStoresFromTheCommand(t *testing.T) {
+	bash := gitBash(t)
+	w := newFakeWitness(t, shield.Policy{Enforce: true, State: shield.Clean, Grants: shield.AllGrants()})
+	s, stdout, _ := testShim(t, w.URL)
+	for _, f := range []string{
+		`AppData\Local\Google\Chrome\User Data\Default\Cookies`,
+		`AppData\Roaming\Mozilla\Firefox\Profiles\x\logins.json`,
+		`AppData\Roaming\Slack\storage\x`,
+	} {
+		p := filepath.Join(s.home, f)
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("SECRET\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.env = append(s.env, "SYSTEMROOT="+os.Getenv("SYSTEMROOT"))
+	code := s.run(bash, []string{"-c", `cd "$HOME/AppData"; cat "Local/Google/Chrome/User Data/Default/Cookies" Roaming/Mozilla/Firefox/Profiles/x/logins.json Roaming/Slack/storage/x; echo x > Roaming/Slack/storage/x && echo PLANTED; echo done`})
+	out := stdout.String()
+	if strings.Contains(out, "SECRET") || strings.Contains(out, "PLANTED") || !strings.Contains(out, "done") || code != 0 {
+		t.Errorf("exit %d, an app's store was reachable: %s", code, out)
+	}
+}

@@ -301,3 +301,100 @@ func TestSSHFilesAreReadByContentNotName(t *testing.T) {
 		t.Error("~/.ssh became writable")
 	}
 }
+
+func TestWorkspaceWritesJail(t *testing.T) {
+	f := newFakeHome(t)
+	write(t, filepath.Join(f.home, "Library", "Caches", "x"), "")
+	write(t, filepath.Join(f.home, "go", "bin", "tool"), "")
+	p := Policy{Enforce: true, State: Clean, Grants: AllGrants(), Writes: WritesWorkspace, AllowWrite: []string{"~/go/bin"}}
+	c := f.context()
+	c.SystemTmp = []string{"/tmp"}
+	for _, bits := range []int{0, 7} {
+		g := Grants{Agent: bits&1 != 0, Docker: bits&2 != 0, Cloud: bits&4 != 0}
+		if !jailed(t, Policy{Enforce: true, State: Clean, Grants: g, Writes: WritesWorkspace, Network: NetworkAllowlist}, c, "true") {
+			t.Errorf("%+v: true failed", g)
+		}
+	}
+	cases := []struct {
+		name, script string
+		allowed      bool
+	}{
+		{"workspace write", "touch " + f.ws + "/out", true},
+		{"turn tmp write", "touch " + f.tmp + "/x", true},
+		{"system tmp write", "f=$(mktemp /tmp/golem-shield-test.XXXXXX) && rm $f", true},
+		{"cache write", "mkdir -p " + f.home + "/Library/Caches/go-build/aa && touch " + f.home + "/Library/Caches/go-build/aa/x", true},
+		{"new cache dir", "mkdir -p " + f.home + "/.npm/_cacache", true},
+		{"allow_write", "touch " + f.home + "/go/bin/new", true},
+		{"home write", "touch " + f.home + "/notes.txt", false},
+		{"shell rc", "echo x >> " + f.home + "/.zshrc", false},
+		{"key still unreadable", "cat " + f.home + "/.ssh/id_ed25519", false},
+	}
+	for _, tc := range cases {
+		if got := jailed(t, p, c, tc.script); got != tc.allowed {
+			t.Errorf("%s: allowed=%v, want %v", tc.name, got, tc.allowed)
+		}
+	}
+}
+
+func TestAllowlistedNetworkReachesOnlyTheProxy(t *testing.T) {
+	listen := func() (int, func()) {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		go func() {
+			for {
+				conn, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				conn.Close()
+			}
+		}()
+		return ln.Addr().(*net.TCPAddr).Port, func() { ln.Close() }
+	}
+	proxy, closeProxy := listen()
+	defer closeProxy()
+	other, closeOther := listen()
+	defer closeOther()
+	f := newFakeHome(t)
+	c := f.context()
+	c.ProxyPort = proxy
+	p := Policy{Enforce: true, State: Clean, Grants: AllGrants(), Network: NetworkAllowlist}
+	short, err := os.MkdirTemp("/tmp", "gs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(short)
+	sock := filepath.Join(short, "s")
+	ul, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ul.Close()
+	go func() {
+		for {
+			conn, err := ul.Accept()
+			if err != nil {
+				return
+			}
+			conn.Close()
+		}
+	}()
+	cases := []struct {
+		name, script string
+		allowed      bool
+	}{
+		{"the proxy", "nc -z -G 2 127.0.0.1 " + itoa(proxy), true},
+		{"another loopback port", "nc -z -G 2 127.0.0.1 " + itoa(other), false},
+		{"a public address", "nc -z -G 2 1.1.1.1 443", false},
+		{"dns", "dscacheutil -q host -a name golem-shield-test.example.com | grep -q address", false},
+		{"a unix socket", "zmodload zsh/net/socket && zsocket " + sock, true},
+		{"home write still open", "touch " + f.home + "/notes.txt", true},
+	}
+	for _, tc := range cases {
+		if got := jailed(t, p, c, tc.script); got != tc.allowed {
+			t.Errorf("%s: allowed=%v, want %v", tc.name, got, tc.allowed)
+		}
+	}
+}

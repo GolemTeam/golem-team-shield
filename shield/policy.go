@@ -39,6 +39,13 @@ type Policy struct {
 	// name, or a prefix ending in *.
 	EnvAllow []string `json:"env_allow,omitempty"`
 	EnvDeny  []string `json:"env_deny,omitempty"`
+	// Writes and Network confine a clean session the way a tainted one is
+	// confined, less tightly (docs/design-shield-workspace-and-egress.md).
+	// Empty is anywhere and open, as before they existed.
+	Writes       Writes   `json:"writes,omitempty"`
+	AllowWrite   []string `json:"allow_write,omitempty"`
+	Network      Network  `json:"network,omitempty"`
+	AllowedHosts []string `json:"allowed_hosts,omitempty"`
 }
 
 func AllGrants() Grants { return Grants{Agent: true, Docker: true, Cloud: true} }
@@ -73,6 +80,12 @@ type Context struct {
 	// inside ~/.ssh.
 	SSHReadable []string
 	ExtraWrite  []string
+	// SystemTmp are the temp directories a clean session confined to the
+	// workspace may still write: $TMPDIR as the agent set it, and /tmp.
+	SystemTmp []string
+	// ProxyPort is the one loopback port a clean session with an allowlisted
+	// network may connect to: the shim's proxy for this command.
+	ProxyPort int
 	// HarnessTmp is where the agent harness has the shell write its own
 	// bookkeeping: Claude Code records the cwd in a temp file after every
 	// command, and a tainted session must not break that.
@@ -112,6 +125,10 @@ func (c Context) validate() error {
 	}
 	others := append([]string{c.TurnTmp, c.AgentSocket, c.HarnessTmp}, c.ExtraWrite...)
 	others = append(others, c.HarnessFiles...)
+	others = append(others, c.SystemTmp...)
+	if c.ProxyPort < 0 || c.ProxyPort > 65535 {
+		return errors.New("proxy port out of range")
+	}
 	for _, p := range append(append(others, c.WorkspaceProtected...), c.SSHReadable...) {
 		if p == "" {
 			continue

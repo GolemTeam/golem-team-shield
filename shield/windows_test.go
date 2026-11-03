@@ -95,3 +95,27 @@ func TestWindowsGrantsOffAndTaint(t *testing.T) {
 		t.Fatalf("tainted: %+v %v", tj, err)
 	}
 }
+
+func TestWindowsDeniesAppStoresWithoutFailingCommands(t *testing.T) {
+	tr := newLLTree(t)
+	h := func(p string) string { return filepath.Join(tr.home, filepath.FromSlash(p)) }
+	plantFile(t, h("AppData/Local/Google/Chrome/User Data/Default/Cookies"))
+	plantFile(t, h("AppData/Roaming/Mozilla/Firefox/Profiles/x/logins.json"))
+	plantFile(t, h("AppData/Roaming/Slack/storage/x"))
+	j, err := CompileWindows(Policy{Enforce: true, State: Clean, Grants: AllGrants()}, tr.context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"AppData/Local/Google/Chrome", "AppData/Roaming/Mozilla/Firefox", "AppData/Roaming/Slack"} {
+		e, ok := winDeny(j, h(p))
+		if !ok || !e.Inherit || e.Deny&WinDenyRead != WinDenyRead || e.Deny&winWriteData == 0 || !e.Optional {
+			t.Errorf("%s: %+v", p, e)
+		}
+	}
+	if e, ok := winDeny(j, h(".golem")); !ok || e.Optional {
+		t.Errorf("a credential store became optional: %+v", e)
+	}
+	if _, ok := winDeny(j, h("AppData/Roaming/Signal")); ok {
+		t.Error("an app that isn't installed got an entry")
+	}
+}

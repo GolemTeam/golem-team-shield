@@ -210,3 +210,121 @@ func TestLinuxJailStageRefusesWithoutASpec(t *testing.T) {
 		t.Fatalf("exit %v, want 126", err)
 	}
 }
+
+func TestLinuxShimKeepsBrowserChatAndPasswordStoresFromTheCommand(t *testing.T) {
+	s, _, out := linuxShim(t, shield.Policy{Enforce: true, State: shield.Clean, Grants: shield.AllGrants()})
+	for _, f := range []string{
+		".mozilla/firefox/x.default/cookies.sqlite",
+		".config/google-chrome/Default/Cookies",
+		".config/Slack/storage/x",
+		".password-store/github.gpg",
+		".thunderbird/x/prefs.js",
+	} {
+		plant(t, filepath.Join(s.home, f), "SECRET\n")
+	}
+	plant(t, filepath.Join(s.home, ".config", "nvim", "init.lua"), "OPEN\n")
+	script := `cd $HOME; cat .mozilla/firefox/x.default/cookies.sqlite .config/google-chrome/Default/Cookies` +
+		` .config/Slack/storage/x .password-store/github.gpg .thunderbird/x/prefs.js .config/nvim/init.lua;` +
+		` echo x > .mozilla/firefox/x.default/user.js && echo PLANTED; echo done`
+	s.run("/bin/bash", []string{"-c", script})
+	got := out.String()
+	if strings.Contains(got, "SECRET") || strings.Contains(got, "PLANTED") {
+		t.Errorf("an app's store was reachable: %s", got)
+	}
+	if !strings.Contains(got, "OPEN") || !strings.Contains(got, "done") {
+		t.Errorf("the rest of ~/.config wasn't readable: %s", got)
+	}
+}
+
+func allowlistScript(other string) string {
+	return `(exec 3<>/dev/tcp/127.0.0.1/` + other + `) 2>/dev/null && echo DIRECT;` +
+		` (exec 3<>/dev/tcp/1.1.1.1/443) 2>/dev/null && echo PUBLIC;` +
+		` (exec 3<>/dev/udp/1.1.1.1/53) 2>/dev/null && echo UDP;` +
+		` p=${HTTPS_PROXY##*:}; exec 3<>/dev/tcp/127.0.0.1/$p && printf 'CONNECT evil.test:443 HTTP/1.1\r\nHost: evil.test\r\n\r\n' >&3 && head -1 <&3; true`
+}
+
+func TestLinuxAllowlistedNetworkReachesOnlyTheProxy(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+	other := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
+	p := shield.Policy{Enforce: true, State: shield.Clean, Grants: shield.AllGrants(), Network: shield.NetworkAllowlist, AllowedHosts: []string{"github.com"}}
+	for _, fallback := range []bool{false, true} {
+		s, w, out := linuxShim(t, p)
+		s.noNamespace = fallback
+		stderr := s.stderr.(*bytes.Buffer)
+		s.run("/bin/bash", []string{"-c", allowlistScript(other)})
+		got := out.String()
+		for _, leak := range []string{"DIRECT", "PUBLIC", "UDP"} {
+			if strings.Contains(got, leak) {
+				t.Errorf("fallback=%v: %s got out: %s", fallback, leak, got)
+			}
+		}
+		if !strings.Contains(got, "403") {
+			t.Errorf("fallback=%v: the proxy didn't answer: %s / %s", fallback, got, stderr)
+		}
+		if !strings.Contains(stderr.String(), "the shield refused evil.test:443: not in the allowed hosts. Allow it in the console") {
+			t.Errorf("fallback=%v: the refusal wasn't named: %s", fallback, stderr)
+		}
+		if len(w.runs) != 1 {
+			t.Fatalf("runs %d", len(w.runs))
+		}
+		rec := w.runs[0]
+		want := shield.NetLandlockPort
+		if !fallback && rec.Net == shield.NetNamespace {
+			want = shield.NetNamespace
+		}
+		t.Logf("fallback=%v: net %s", fallback, rec.Net)
+		if !fallback && os.Getenv("GOLEM_EXEC_EXPECT_NAMESPACE") == "1" && rec.Net != shield.NetNamespace {
+			t.Errorf("expected a namespace here, got %s", rec.Net)
+		}
+		if rec.Net != want || len(rec.Egress) != 1 || rec.Egress[0].Host != "evil.test" || rec.Egress[0].Allowed {
+			t.Errorf("fallback=%v: run record net %q egress %+v", fallback, rec.Net, rec.Egress)
+		}
+	}
+}
+
+func TestLinuxWorkspaceWritesStayInTheRoots(t *testing.T) {
+	s, w, out := linuxShim(t, shield.Policy{Enforce: true, State: shield.Clean, Grants: shield.AllGrants(), Writes: shield.WritesWorkspace})
+	plant(t, filepath.Join(s.home, ".cache", "keep"), "")
+	plant(t, filepath.Join(s.home, "notes"), "")
+	script := `echo x > ws.txt && echo WS; echo x > $TMPDIR/t && echo TMP; echo x > $HOME/.cache/new && echo CACHE;` +
+		` echo x >> $HOME/notes && echo HOME; mkdir $HOME/newdir 2>/dev/null && echo MKDIR; true`
+	s.run("/bin/bash", []string{"-c", script})
+	got := out.String()
+	for _, want := range []string{"WS", "TMP", "CACHE"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("%s wasn't writable: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "HOME") || strings.Contains(got, "MKDIR") {
+		t.Errorf("a write left the roots: %s", got)
+	}
+	if len(w.runs) != 1 || w.runs[0].Writes != "workspace" {
+		t.Errorf("runs %+v", w.runs)
+	}
+}
+
+func TestLinuxNamespacedCommandHasNoCapabilities(t *testing.T) {
+	p := shield.Policy{Enforce: true, State: shield.Clean, Grants: shield.AllGrants(), Network: shield.NetworkAllowlist}
+	s, w, out := linuxShim(t, p)
+	s.run("/bin/bash", []string{"-c", `grep -E '^Cap(Eff|Prm|Amb)' /proc/self/status; id -u`})
+	if len(w.runs) != 1 || w.runs[0].Net != shield.NetNamespace {
+		t.Skipf("no namespace here (net %q)", w.runs[0].Net)
+	}
+	got := out.String()
+	if strings.Count(got, "0000000000000000") != 3 || !strings.Contains(got, strconv.Itoa(os.Getuid())) {
+		t.Errorf("the command kept capabilities or changed user: %s", got)
+	}
+}

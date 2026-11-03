@@ -50,6 +50,11 @@ type Item struct {
 	// full_access.
 	Check    string `json:"check,omitempty"`
 	Severity string `json:"severity,omitempty"`
+	// Area is the report section (areas.go).
+	Area string `json:"area,omitempty"`
+	// Subject is the MCP server, hook event, skill or plugin a finding is
+	// about, where it is about one.
+	Subject string `json:"subject,omitempty"`
 	// Scope is where the setting applies: managed, user, project or local.
 	Scope string `json:"scope,omitempty"`
 	// Location is the file, with the home directory shown as ~, or a registry
@@ -58,6 +63,7 @@ type Item struct {
 	Setting  string `json:"setting,omitempty"`
 	Value    string `json:"value,omitempty"`
 	Detail   string `json:"detail,omitempty"`
+	Line     int    `json:"line,omitempty"`
 }
 
 // Env is what a scan reads from. DefaultEnv fills it for the current machine;
@@ -128,17 +134,26 @@ func defaultCodexHomes(home string) []string {
 }
 
 type scan struct {
-	env   Env
-	items []Item
+	env    Env
+	items  []Item
+	agents map[string]bool
+	read   map[string]bool
 }
 
 // Scan reads every supported agent's settings and returns what it finds,
 // worst first, at most MaxItems. It only reads files.
 func Scan(env Env) []Item {
+	if s := scanEnv(env); s != nil {
+		return s.items
+	}
+	return nil
+}
+
+func scanEnv(env Env) *scan {
 	if env.Home == "" {
 		return nil
 	}
-	s := &scan{env: env}
+	s := &scan{env: env, agents: map[string]bool{}, read: map[string]bool{}}
 	s.claudeCode()
 	s.cursorCLI()
 	s.codex()
@@ -151,7 +166,16 @@ func Scan(env Env) []Item {
 	if len(s.items) > MaxItems {
 		s.items = s.items[:MaxItems]
 	}
-	return s.items
+	return s
+}
+
+func sortedSet(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Rank orders severities: dangerous first.
@@ -185,7 +209,7 @@ func Sort(items []Item) {
 
 func (s *scan) add(client, check, sev, scope, path, setting, value, detail string) {
 	s.items = append(s.items, Item{
-		Client: client, Check: check, Severity: sev, Scope: scope, Location: s.display(path),
+		Client: client, Check: check, Severity: sev, Area: areaOf(check), Scope: scope, Location: s.display(path),
 		Setting: setting, Value: value, Detail: detail,
 	})
 }
@@ -347,6 +371,7 @@ func (s *scan) claudeCode() {
 	if !claudeCodeInUse(s.env.Home) {
 		return
 	}
+	s.agents[client] = true
 	files := s.claudeSettingsFiles()
 	bypassRefused := false
 	for _, f := range files {
@@ -393,7 +418,10 @@ func (s *scan) claudeCode() {
 			}
 		}
 	}
-	if !sandbox {
+	if sandbox {
+		s.add(client, "agent_sandbox", Info, sandboxScope, sandboxPath, "sandbox.enabled", "true",
+			"shell commands run in Claude Code's sandbox")
+	} else {
 		s.add(client, "no_sandbox", Info, sandboxScope, sandboxPath, "sandbox.enabled", "false",
 			"shell commands run without Claude Code's sandbox")
 	}
@@ -406,6 +434,7 @@ func (s *scan) cursorCLI() {
 	if m == nil {
 		return
 	}
+	s.agents[client] = true
 	switch lookupString(m, "approvalMode") {
 	case "unrestricted":
 		s.add(client, "run_everything", Dangerous, "user", path, "approvalMode", "unrestricted",
@@ -414,9 +443,13 @@ func (s *scan) cursorCLI() {
 		s.add(client, "auto_review", Info, "user", path, "approvalMode", "auto-review",
 			"Cursor's CLI lets a model approve commands instead of asking")
 	}
-	if lookupString(m, "sandbox", "mode") == "disabled" {
+	switch lookupString(m, "sandbox", "mode") {
+	case "disabled":
 		s.add(client, "no_sandbox", Info, "user", path, "sandbox.mode", "disabled",
 			"Cursor's CLI runs commands without its sandbox")
+	case "enabled":
+		s.add(client, "agent_sandbox", Info, "user", path, "sandbox.mode", "enabled",
+			"Cursor's CLI runs commands in its sandbox")
 	}
 }
 
@@ -468,9 +501,19 @@ func readCodexTOML(path string) codexTOML {
 
 func (s *scan) codex() {
 	const client = "codex"
+	sandboxed := ""
 	for _, dir := range s.env.CodexHomes {
 		path := filepath.Join(dir, "config.toml")
+		if isDir(dir) {
+			s.agents[client] = true
+			if sandboxed == "" {
+				sandboxed = path
+			}
+		}
 		if doc := readCodexTOML(path); doc != nil {
+			if doc[""]["sandbox_mode"] == "danger-full-access" {
+				sandboxed = "-"
+			}
 			tables := make([]string, 0, len(doc))
 			for t := range doc {
 				tables = append(tables, t)
@@ -495,6 +538,12 @@ func (s *scan) codex() {
 				s.codexTable(client, "user", p, strings.TrimSuffix(filepath.Base(p), ".config.toml"), doc[""])
 			}
 		}
+	}
+	// Codex sandboxes commands unless its default says otherwise; a profile
+	// that turns the sandbox off is reported as its own finding.
+	if sandboxed != "" && sandboxed != "-" {
+		s.add(client, "agent_sandbox", Info, "user", sandboxed, "sandbox_mode", "default",
+			"Codex runs commands in its sandbox by default")
 	}
 }
 
@@ -532,6 +581,7 @@ func (s *scan) gemini() {
 	if len(files) == 0 {
 		return
 	}
+	s.agents[client] = true
 	yoloRefused := false
 	for _, f := range files {
 		if v, _ := lookupBool(f.m, "security", "disableYoloMode"); v {
@@ -553,11 +603,32 @@ func (s *scan) gemini() {
 				"file edits run without asking")
 		}
 	}
+	for _, f := range files {
+		if geminiSandbox(f.m) {
+			s.add(client, "agent_sandbox", Info, f.scope, f.path, "tools.sandbox", "true",
+				"Gemini CLI runs tools in its sandbox")
+			break
+		}
+	}
 	if !yoloRefused {
 		f := files[len(files)-1]
 		s.add(client, "yolo_allowed", Info, f.scope, f.path, "security.disableYoloMode", "false",
 			"YOLO mode is not disabled, so --yolo runs every tool without asking")
 	}
+}
+
+// geminiSandbox is tools.sandbox (or the older top-level sandbox) set to true
+// or to a sandbox command.
+func geminiSandbox(m map[string]any) bool {
+	for _, v := range []any{lookup(m, "tools", "sandbox"), lookup(m, "sandbox")} {
+		switch v := v.(type) {
+		case bool:
+			return v
+		case string:
+			return v != "" && v != "false"
+		}
+	}
+	return false
 }
 
 var editorApps = []struct{ client, dir string }{
@@ -568,6 +639,10 @@ var editorApps = []struct{ client, dir string }{
 	{"windsurf", "Windsurf"},
 	{"antigravity", "Antigravity"},
 }
+
+// aiEditors are the editors built around an agent. VS Code and its forks are
+// not counted as agents on their settings alone.
+var aiEditors = map[string]bool{"cursor": true, "windsurf": true, "antigravity": true}
 
 func (s *scan) editorBase() string {
 	switch s.env.GOOS {
@@ -592,6 +667,9 @@ func (s *scan) editors() {
 		m := readSettings(path)
 		if m == nil {
 			continue
+		}
+		if aiEditors[app.client] {
+			s.agents[app.client] = true
 		}
 		// VS Code keeps settings as flat dotted keys, not nested objects.
 		for _, key := range []string{"chat.tools.global.autoApprove", "chat.tools.autoApprove"} {
@@ -642,6 +720,9 @@ func (s *scan) devinShellAllowed(scope, path, repo string) {
 
 func (s *scan) devin() {
 	if dir := s.devinConfigDir(); dir != "" {
+		if isDir(dir) {
+			s.agents["devin"] = true
+		}
 		s.devinShellAllowed("user", filepath.Join(dir, "config.json"), "")
 	}
 	for _, root := range s.projectRoots() {

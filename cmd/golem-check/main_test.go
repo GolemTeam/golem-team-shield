@@ -29,7 +29,7 @@ func TestReportsPromptsOffAndSaysNothingWasSent(t *testing.T) {
 	if code := run(nil, &out, &errs); code != 0 {
 		t.Fatalf("exit %d: %s", code, errs.String())
 	}
-	for _, want := range []string{"DANGEROUS", "claude-code", "Nothing was sent anywhere", installCommand(runtime.GOOS)} {
+	for _, want := range []string{"grade D", "DANGEROUS", "claude-code", "Nothing was sent anywhere", "Not read: MCP tool descriptions", installCommand(runtime.GOOS)} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("missing %q in:\n%s", want, out.String())
 		}
@@ -54,6 +54,27 @@ func TestJSONListsEveryFinding(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("no bypass_default finding in %s", out.String())
+	}
+}
+
+func TestJSONWithScoreWrapsTheSameItems(t *testing.T) {
+	withSettings(t, `{"permissions":{"defaultMode":"bypassPermissions"}}`)
+	var out, errs bytes.Buffer
+	if code := run([]string{"-json", "-with-score"}, &out, &errs); code != 0 {
+		t.Fatalf("exit %d: %s", code, errs.String())
+	}
+	var doc struct {
+		Score struct {
+			Version, Grade string
+			Score          int
+		}
+		Items []struct{ Check, Area string }
+	}
+	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+		t.Fatalf("%v: %s", err, out.String())
+	}
+	if doc.Score.Grade != "D" || doc.Score.Version == "" || len(doc.Items) == 0 || doc.Items[0].Check != "bypass_default" || doc.Items[0].Area != "run_modes" {
+		t.Errorf("got %+v", doc)
 	}
 }
 

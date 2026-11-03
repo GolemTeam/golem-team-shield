@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -243,5 +245,48 @@ func TestOnlyARealSocketIsTakenAsTheAgentSocket(t *testing.T) {
 	}
 	if got := agentSocket(filepath.Join(dir, "missing")); got != "" {
 		t.Errorf("a missing path was taken as the agent socket: %q", got)
+	}
+}
+
+func TestProxyEnvPointsEveryVariableAtTheProxy(t *testing.T) {
+	env := proxyEnv([]string{"PATH=/bin", "https_proxy=http://corp:3128", "NO_PROXY=localhost", "no_proxy=*", "NODE_USE_ENV_PROXY=0"}, 4321)
+	got := strings.Join(env, " ")
+	for _, want := range []string{"PATH=/bin", "HTTPS_PROXY=http://127.0.0.1:4321", "https_proxy=http://127.0.0.1:4321", "ALL_PROXY=http://127.0.0.1:4321", "NODE_USE_ENV_PROXY=1"} {
+		if !strings.Contains(" "+got+" ", " "+want+" ") {
+			t.Errorf("%s missing from %s", want, got)
+		}
+	}
+	for _, gone := range []string{"corp:3128", "NO_PROXY", "no_proxy", "NODE_USE_ENV_PROXY=0"} {
+		if strings.Contains(got, gone) {
+			t.Errorf("%s kept: %s", gone, got)
+		}
+	}
+}
+
+func TestRefusedHostsAreNamedOnStderrWithWhereToAllowThem(t *testing.T) {
+	s, _, stderr := testShim(t, "http://127.0.0.1:1")
+	if err := shield.WriteConfig(shield.ConfigPath(s.home), shield.Config{Network: shield.NetworkAllowlist, AllowedHosts: []string{"github.com"}}); err != nil {
+		t.Fatal(err)
+	}
+	p := s.configPolicy()
+	if !p.Proxied() || !s.standalone {
+		t.Fatalf("policy %+v standalone %v", p, s.standalone)
+	}
+	if err := s.startProxy(p); err != nil {
+		t.Fatal(err)
+	}
+	defer s.proxy.Close()
+	var recs []shield.EgressRecord
+	for i := 0; i < maxRefusedLines+2; i++ {
+		recs = append(recs, shield.EgressRecord{Host: fmt.Sprintf("h%d.test", i), Port: 443, Reason: "not_allowed"})
+	}
+	recs = append(recs, shield.EgressRecord{Host: "github.com", Port: 443, Allowed: true})
+	s.tellRefused(recs)
+	got := stderr.String()
+	if !strings.Contains(got, `golem-exec: the shield refused h0.test:443: not in the allowed hosts. Add it to "allowed_hosts" in ~/.golem/shield.json.`) {
+		t.Errorf("stderr %s", got)
+	}
+	if strings.Count(got, "refused h") != maxRefusedLines || !strings.Contains(got, "and 2 more refused") || strings.Contains(got, "github.com") {
+		t.Errorf("stderr %s", got)
 	}
 }

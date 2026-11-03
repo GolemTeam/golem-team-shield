@@ -74,6 +74,28 @@ type LinuxJail struct {
 	Handled uint64         `json:"handled"`
 	Rules   []LandlockRule `json:"rules"`
 	Sockets SocketDeny     `json:"sockets,omitempty"`
+	// Proxy is the one port the command may connect to when its network is
+	// allowlisted. The jail stage puts the command in a network namespace
+	// where only the proxy answers, or, where it can't, lets Landlock allow
+	// TCP to this port alone (NetFallback); 0 leaves the network as the
+	// state has it.
+	Proxy int `json:"proxy,omitempty"`
+}
+
+// LandlockNetMinABI is the first interface with TCP connect rules (6.7).
+const LandlockNetMinABI = 4
+
+// LandlockNetConnectTCP is LANDLOCK_ACCESS_NET_CONNECT_TCP.
+const LandlockNetConnectTCP uint64 = 1 << 1
+
+// NetFallback is how the jail stage holds an allowlisted network when it
+// can't make a namespace: Landlock's port rule with only TCP sockets, or, on
+// a kernel without one, no IP sockets at all, never an open network.
+func (j LinuxJail) NetFallback() (NetMode, InetDeny) {
+	if j.ABI >= LandlockNetMinABI {
+		return NetLandlockPort, InetTCPOnly
+	}
+	return NetNone, InetAll
 }
 
 // LandlockRule grants Access on Path and everything beneath it.
@@ -139,7 +161,7 @@ func CompileLandlock(p Policy, c Context, abi int) (LinuxJail, error) {
 	supported := llSupported(abi)
 	r := newRules(supported)
 
-	readDeny := homePaths(c.Home, secretStores)
+	readDeny := append(homePaths(c.Home, secretStores), existing(homePaths(c.Home, linuxAppStores))...)
 	writeDeny := append(homePaths(c.Home, protectedWrites), homePaths(c.Home, linuxProtectedWrites)...)
 	writeDeny = append(writeDeny, readDeny...)
 	if !g.Cloud {
@@ -163,12 +185,9 @@ func CompileLandlock(p Policy, c Context, abi int) (LinuxJail, error) {
 		}
 	}
 
-	if p.Tainted() {
-		roots := append(append([]string{c.TurnTmp}, c.Workspace...), c.ExtraWrite...)
+	if roots := writeRoots(p, c, "linux"); roots != nil {
 		for _, w := range roots {
-			if w != "" {
-				r.complement(w, writeDeny, llWrite, llWriteFile|llTruncate)
-			}
+			r.complement(w, writeDeny, llWrite, llWriteFile|llTruncate)
 		}
 		for _, d := range linuxDeviceWrites {
 			if fi, err := os.Stat(d); err == nil {
@@ -191,6 +210,9 @@ func CompileLandlock(p Policy, c Context, abi int) (LinuxJail, error) {
 	case !g.Agent || !g.Docker:
 		j.Sockets = SocketsUnix
 	}
+	if p.Proxied() {
+		j.Proxy = c.ProxyPort
+	}
 	return j, nil
 }
 
@@ -205,6 +227,19 @@ func homePaths(home string, ms []match) []string {
 			continue
 		}
 		out = append(out, filepath.Join(home, m.path))
+	}
+	return out
+}
+
+// existing keeps the paths that are there. An app store that isn't installed
+// has nothing to read, and denying it anyway would leave its parent (~/.config,
+// ~/.local/share) a directory nothing new can be created in.
+func existing(paths []string) []string {
+	var out []string
+	for _, p := range paths {
+		if _, err := os.Lstat(p); err == nil {
+			out = append(out, p)
+		}
 	}
 	return out
 }

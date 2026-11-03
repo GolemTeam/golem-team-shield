@@ -64,6 +64,12 @@ func (s *shim) jailed(rec *shield.RunRecord, p shield.Policy, tmp string, argv, 
 	}
 	rec.Jail = shield.JailToken
 	rec.PolicyHash = j.Hash()
+	if p.ConfinedWrites() {
+		rec.Writes = "deny-list"
+	}
+	if p.Proxied() {
+		rec.Net = shield.NetAdvisory
+	}
 	if j.Refuse {
 		fmt.Fprintln(s.stderr, "golem-exec: this session is locked down, and on Windows a locked-down session can't run shell commands")
 		rec.ExitCode = 126
@@ -118,10 +124,11 @@ func skipArg0(cmdline string) string {
 
 // applyDenies puts each deny entry in place if it isn't already. A credential
 // store it can't protect stops the command; a startup file it can't protect
-// doesn't, since the user can't usually write one they don't own either.
+// doesn't, since the user can't usually write one they don't own either, and
+// nor does an app's store the app holds open (WindowsACE.Optional).
 func applyDenies(j shield.WindowsJail, sid *windows.SID) error {
 	for _, e := range j.Files {
-		if err := ensureDeny(e.Path, windows.SE_FILE_OBJECT, sid, e.Deny, e.Inherit); err != nil && e.Deny&shield.WinDenyRead != 0 {
+		if err := ensureDeny(e.Path, windows.SE_FILE_OBJECT, sid, e.Deny, e.Inherit); err != nil && e.Deny&shield.WinDenyRead != 0 && !e.Optional {
 			return err
 		}
 	}
