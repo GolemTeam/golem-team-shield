@@ -251,7 +251,11 @@ func TestOnlyARealSocketIsTakenAsTheAgentSocket(t *testing.T) {
 func TestProxyEnvPointsEveryVariableAtTheProxy(t *testing.T) {
 	env := proxyEnv([]string{"PATH=/bin", "https_proxy=http://corp:3128", "NO_PROXY=localhost", "no_proxy=*", "NODE_USE_ENV_PROXY=0"}, 4321)
 	got := strings.Join(env, " ")
-	for _, want := range []string{"PATH=/bin", "HTTPS_PROXY=http://127.0.0.1:4321", "https_proxy=http://127.0.0.1:4321", "ALL_PROXY=http://127.0.0.1:4321", "NODE_USE_ENV_PROXY=1"} {
+	wants := []string{"PATH=/bin", "https_proxy=http://127.0.0.1:4321", "all_proxy=http://127.0.0.1:4321", "NODE_USE_ENV_PROXY=1"}
+	if runtime.GOOS != "windows" {
+		wants = append(wants, "HTTPS_PROXY=http://127.0.0.1:4321", "ALL_PROXY=http://127.0.0.1:4321")
+	}
+	for _, want := range wants {
 		if !strings.Contains(" "+got+" ", " "+want+" ") {
 			t.Errorf("%s missing from %s", want, got)
 		}

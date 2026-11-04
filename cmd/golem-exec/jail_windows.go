@@ -1,14 +1,11 @@
 package main
 
 import (
-	"crypto/sha256"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"slices"
-	"strconv"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -39,12 +36,7 @@ func canJail() bool { return true }
 // authority (S-1-9); CreateRestrictedToken refuses a capability SID
 // (S-1-15-3) as a restricting SID.
 func shieldSID() (*windows.SID, error) {
-	sum := sha256.Sum256([]byte("golem-shield"))
-	s := "S-1-9-1"
-	for i := 0; i < 4; i++ {
-		s += "-" + strconv.FormatUint(uint64(binary.LittleEndian.Uint32(sum[i*4:])), 10)
-	}
-	return windows.StringToSid(s)
+	return windows.StringToSid(shield.ShieldSIDString())
 }
 
 // jailed runs the shell with a restricted token: every access must pass the
@@ -66,6 +58,9 @@ func (s *shim) jailed(rec *shield.RunRecord, p shield.Policy, tmp string, argv, 
 	rec.PolicyHash = j.Hash()
 	if p.Proxied() {
 		rec.Net = shield.NetAdvisory
+		if on, err := shield.FirewallInstalled(); err == nil && on {
+			rec.Net = shield.NetFirewall
+		}
 	}
 	if j.Refuse {
 		fmt.Fprintln(s.stderr, "golem-exec: this session is locked down, and on Windows a locked-down session can't run shell commands")
@@ -79,7 +74,15 @@ func (s *shim) jailed(rec *shield.RunRecord, p shield.Policy, tmp string, argv, 
 	if err := applyDenies(j, sid); err != nil {
 		return false
 	}
-	tok, err := restrictedToken(sid, j.DropGroups)
+	extra := []*windows.SID{sid}
+	if j.Firewalled {
+		net, err := windows.StringToSid(shield.ShieldNetSIDString())
+		if err != nil {
+			return false
+		}
+		extra = append(extra, net)
+	}
+	tok, err := restrictedToken(extra, j.DropGroups)
 	if err != nil {
 		return false
 	}
@@ -301,7 +304,7 @@ func hasACE(dacl *windows.ACL, aceType uint8, sid *windows.SID, mask uint32, inh
 // those in drop, and the shield. Administrators stays in for an elevated
 // shell: without it Git Bash can't create its own pipes, because an elevated
 // token's default owner is that group.
-func restrictedToken(shieldSID *windows.SID, drop []string) (windows.Token, error) {
+func restrictedToken(shieldSIDs []*windows.SID, drop []string) (windows.Token, error) {
 	var proc windows.Token
 	access := uint32(windows.TOKEN_DUPLICATE | windows.TOKEN_QUERY | windows.TOKEN_ASSIGN_PRIMARY | windows.TOKEN_ADJUST_DEFAULT)
 	if err := windows.OpenProcessToken(windows.CurrentProcess(), access, &proc); err != nil {
@@ -332,7 +335,9 @@ func restrictedToken(shieldSID *windows.SID, drop []string) (windows.Token, erro
 		}
 		restrict = append(restrict, windows.SIDAndAttributes{Sid: g.Sid})
 	}
-	restrict = append(restrict, windows.SIDAndAttributes{Sid: shieldSID})
+	for _, s := range shieldSIDs {
+		restrict = append(restrict, windows.SIDAndAttributes{Sid: s})
+	}
 	var out windows.Token
 	r, _, e := procCreateRestrictedToken.Call(uintptr(proc), disableMaxPrivilege, 0, 0, 0, 0,
 		uintptr(len(restrict)), uintptr(unsafe.Pointer(&restrict[0])), uintptr(unsafe.Pointer(&out)))

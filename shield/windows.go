@@ -78,6 +78,10 @@ type WindowsJail struct {
 	// deny entries can't express.
 	LowIntegrity bool     `json:"low_integrity,omitempty"`
 	LowRoots     []string `json:"low_roots,omitempty"`
+	// Firewalled puts ShieldNetSIDString in the shell's restricting SIDs, so
+	// the shield's firewall filters, where installed, hold its network to the
+	// proxy.
+	Firewalled bool `json:"firewalled,omitempty"`
 }
 
 func (j WindowsJail) Hash() string {
@@ -208,6 +212,7 @@ func CompileWindows(p Policy, c Context) (WindowsJail, error) {
 	if !g.Docker {
 		j.DropGroups = []string{"docker-users"}
 	}
+	j.Firewalled = p.Proxied()
 	if p.ConfinedWrites() {
 		j.LowIntegrity = true
 		for _, r := range writeRoots(p, c, "windows") {

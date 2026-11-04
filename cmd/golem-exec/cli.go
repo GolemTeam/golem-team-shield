@@ -26,6 +26,8 @@ const cliUsage = `usage: golem-exec <command>
   install [--strict]   jail the shell commands Claude Code, Codex, Gemini CLI, Cursor and Copilot CLI run
   install --refresh    update an installed shim to this binary, and nothing else
   status               show what is installed and the policy commands get
+  firewall install     on Windows, as administrator: hold an allowed-hosts network to its list
+  firewall remove      take the shield's firewall filters out again
   test                 check that the jail blocks what it should
   uninstall [--purge]  put the agents' shells back (--purge also removes ~/.golem/shield.json)
   version              print the version
@@ -52,6 +54,7 @@ type setup struct {
 	stdout     io.Writer
 	stderr     io.Writer
 	canJail    func() bool
+	firewallOn func() (bool, error)
 	agentRuns  func() bool
 	selfTest   func(shim, command string) (int, error)
 }
@@ -64,7 +67,7 @@ func newSetup(witness string) *setup {
 	}
 	s := &setup{
 		home: home, goos: runtime.GOOS, exe: exe, loginShell: os.Getenv("SHELL"), codexHome: os.Getenv("CODEX_HOME"), witness: witness,
-		stdin: os.Stdin, stdout: os.Stdout, stderr: os.Stderr, canJail: canJail, selfTest: runThroughShim,
+		stdin: os.Stdin, stdout: os.Stdout, stderr: os.Stderr, canJail: canJail, firewallOn: firewallInstalled, selfTest: runThroughShim,
 	}
 	s.agentRuns = s.agentPresent
 	return s
@@ -91,6 +94,8 @@ func runCommand(s *setup, args []string) int {
 		return s.status()
 	case "hook":
 		return s.hook(args[1:])
+	case "firewall":
+		return s.firewall(args[1:])
 	case "test":
 		return s.test()
 	case "help", "-h", "--help":
@@ -419,7 +424,12 @@ func (s *setup) statusConfinement(p shield.Policy) {
 	fmt.Fprintf(s.stdout, "network      allowed hosts only, through a proxy: %s\n", hosts)
 	switch s.goos {
 	case "windows":
-		fmt.Fprintln(s.stdout, "             Windows can't refuse a program that ignores the proxy, so this binds only those that use it")
+		if on, err := s.firewallOn(); err == nil && on {
+			fmt.Fprintln(s.stdout, "             held by the shield's Windows firewall filters")
+		} else {
+			fmt.Fprintln(s.stdout, "             without the shield's firewall, only programs that use the proxy are held to the list;")
+			fmt.Fprintln(s.stdout, "             run `golem-exec firewall install` as administrator to refuse the rest")
+		}
 	case "linux":
 		fmt.Fprintln(s.stdout, "             held by a network namespace, or where the kernel allows none, by Landlock's port rule,")
 		fmt.Fprintln(s.stdout, "             which lets a program that ignores the proxy reach any host on the proxy's port")
@@ -477,6 +487,30 @@ func runThroughShim(shim, command string) (int, error) {
 		return -1, err
 	}
 	return 0, nil
+}
+
+// firewall installs or removes the shield's Windows Filtering Platform
+// filters, which hold an allowlisted shell to its proxy. They touch only a
+// shell the shim marks, and persist until removed.
+func (s *setup) firewall(args []string) int {
+	if len(args) != 1 || (args[0] != "install" && args[0] != "remove") {
+		fmt.Fprint(s.stderr, cliUsage)
+		return 2
+	}
+	if s.goos != "windows" {
+		fmt.Fprintln(s.stderr, "golem-exec: the firewall is for Windows; macOS and Linux hold the network in the kernel jail itself")
+		return 1
+	}
+	if err := changeFirewall(args[0] == "install"); err != nil {
+		fmt.Fprintf(s.stderr, "golem-exec: could not %s the firewall filters (%v); run this as administrator\n", args[0], err)
+		return 1
+	}
+	if args[0] == "install" {
+		fmt.Fprintln(s.stdout, "Installed the shield's firewall filters: an allowed-hosts network now refuses programs that ignore the proxy.")
+	} else {
+		fmt.Fprintln(s.stdout, "Removed the shield's firewall filters.")
+	}
+	return 0
 }
 
 func jailUnavailable(goos string) string {

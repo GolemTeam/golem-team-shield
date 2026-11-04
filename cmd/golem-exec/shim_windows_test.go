@@ -1,10 +1,15 @@
 package main
 
 import (
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"golang.org/x/sys/windows"
 
 	"github.com/GolemTeam/golem-team-shield/shield"
 )
@@ -125,5 +130,83 @@ func TestWindowsWorkspaceWritesStayInTheProject(t *testing.T) {
 	}
 	if len(w.runs) != 1 || w.runs[0].Writes != "workspace" {
 		t.Errorf("runs %+v", w.runs)
+	}
+}
+
+func TestWindowsFirewallHoldsOnlyAnAllowlistedShell(t *testing.T) {
+	bash := gitBash(t)
+	if !windows.GetCurrentProcessToken().IsElevated() {
+		t.Skip("installing the firewall filters needs administrator rights")
+	}
+	if err := shield.InstallFirewall(); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := shield.RemoveFirewall(); err != nil {
+			t.Errorf("remove: %v", err)
+		}
+	})
+	if on, err := shield.FirewallInstalled(); err != nil || !on {
+		t.Fatalf("installed: %v %v", on, err)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+	other := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
+	for _, addr := range []string{"127.0.0.1:" + other, "github.com:443"} {
+		c, err := net.DialTimeout("tcp", addr, 10*time.Second)
+		if err != nil {
+			t.Fatalf("an unjailed process lost %s to the filters: %v", addr, err)
+		}
+		c.Close()
+	}
+
+	script := `(exec 3<>/dev/tcp/127.0.0.1/` + other + `) 2>/dev/null && echo DIRECT;` +
+		` (exec 3<>/dev/tcp/github.com/443) 2>/dev/null && echo PUBLIC;` +
+		` echo "proxy=[$https_proxy]"; p=${https_proxy##*:}; if [ -n "$p" ]; then exec 3<>/dev/tcp/127.0.0.1/$p || echo CONNFAIL; printf 'CONNECT evil.test:443 HTTP/1.1\r\nHost: evil.test\r\n\r\n' >&3 && head -1 <&3; fi; exit 0`
+	run := func(p shield.Policy) (string, shield.RunRecord) {
+		w := newFakeWitness(t, p)
+		s, stdout, stderr := testShim(t, w.URL)
+		t.Cleanup(func() {
+			if t.Failed() {
+				t.Logf("stdout %q stderr %q", stdout.String(), stderr.String())
+			}
+		})
+		s.env = append(s.env, "SYSTEMROOT="+os.Getenv("SYSTEMROOT"))
+		s.run(bash, []string{"-c", script})
+		if len(w.runs) != 1 {
+			t.Fatalf("runs %d", len(w.runs))
+		}
+		return stdout.String(), w.runs[0]
+	}
+	out, rec := run(shield.Policy{Enforce: true, State: shield.Clean, Grants: shield.AllGrants(),
+		Network: shield.NetworkAllowlist, AllowedHosts: []string{"github.com"}})
+	if strings.Contains(out, "DIRECT") || strings.Contains(out, "PUBLIC") {
+		t.Errorf("an allowlisted shell went around the proxy: %s", out)
+	}
+	if !strings.Contains(out, "403") {
+		t.Errorf("the proxy wasn't reachable: %s", out)
+	}
+	if rec.Net != shield.NetFirewall {
+		t.Errorf("net %q", rec.Net)
+	}
+	out, _ = run(shield.Policy{Enforce: true, State: shield.Clean, Grants: shield.AllGrants()})
+	if !strings.Contains(out, "DIRECT") || !strings.Contains(out, "PUBLIC") {
+		t.Errorf("the filters held a shell whose network is open: %s", out)
+	}
+	out, rec = run(shield.Policy{Enforce: true, State: shield.Clean, Grants: shield.AllGrants(), Writes: shield.WritesWorkspace})
+	if rec.Writes != "workspace" || !strings.Contains(out, "DIRECT") || !strings.Contains(out, "PUBLIC") {
+		t.Errorf("the filters held a low-integrity process they don't mark (writes %q): %s", rec.Writes, out)
 	}
 }

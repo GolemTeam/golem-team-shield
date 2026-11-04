@@ -41,8 +41,10 @@ const (
 	// NetNone: no way to confine it to the proxy, so no network at all.
 	NetNone NetMode = "none"
 	// NetAdvisory: the proxy variables only; nothing refuses a program that
-	// ignores them (Windows).
+	// ignores them (Windows without the shield's firewall).
 	NetAdvisory NetMode = "advisory"
+	// NetFirewall: the shield's Windows Filtering Platform filters.
+	NetFirewall NetMode = "firewall"
 )
 
 // RunRecord is what the shim reports after the command exits. It never

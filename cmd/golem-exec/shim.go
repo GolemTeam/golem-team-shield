@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -192,7 +193,7 @@ const (
 // startProxy listens for this command's proxy on a fresh loopback port, the
 // only one its jail lets it reach.
 func (s *shim) startProxy(p shield.Policy) error {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := listenProxy()
 	if err != nil {
 		return err
 	}
@@ -204,6 +205,23 @@ func (s *shim) startProxy(p shield.Policy) error {
 	s.proxyPort = ln.Addr().(*net.TCPAddr).Port
 	s.proxy.Serve(ln)
 	return nil
+}
+
+// listenProxy takes a fresh loopback port. On Windows it has to be one of
+// the ports the shield's firewall lets a jailed shell reach.
+func listenProxy() (net.Listener, error) {
+	if runtime.GOOS != "windows" {
+		return net.Listen("tcp", "127.0.0.1:0")
+	}
+	lo, hi := int(shield.WindowsProxyPorts[0]), int(shield.WindowsProxyPorts[1])
+	start := lo + int(time.Now().UnixNano()%int64(hi-lo+1))
+	for i := 0; i <= hi-lo; i++ {
+		port := lo + (start-lo+i)%(hi-lo+1)
+		if ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port))); err == nil {
+			return ln, nil
+		}
+	}
+	return nil, errors.New("no free proxy port")
 }
 
 var proxyVars = []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"}
@@ -222,7 +240,13 @@ func proxyEnv(env []string, port int) []string {
 	}
 	url := fmt.Sprintf("http://127.0.0.1:%d", port)
 	for _, v := range proxyVars[:3] {
-		out = append(out, v+"="+url, strings.ToLower(v)+"="+url)
+		// Windows names are one name whatever their case, so a second
+		// spelling would only replace the first; lower case is what Git
+		// Bash's tools read, and Windows programs read it too.
+		if runtime.GOOS != "windows" {
+			out = append(out, v+"="+url)
+		}
+		out = append(out, strings.ToLower(v)+"="+url)
 	}
 	return append(out, "NODE_USE_ENV_PROXY=1")
 }

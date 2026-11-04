@@ -92,6 +92,12 @@ As
 .BR install ,
 and a new settings file also keeps cloud credentials out of reach.
 .TP
+.B firewall install
+On Windows, as administrator: install the Windows Filtering Platform filters
+that refuse an allowed-hosts command every connection but the one to its proxy.
+They touch only commands the shim marks, and persist until
+.BR "firewall remove" .
+.TP
 .B install \-\-refresh
 Replace an installed shim with this binary and change nothing else.
 It does nothing when no shim is installed or the Golem agent manages the
@@ -174,7 +180,10 @@ leaves the network alone.
 On Linux a network namespace holds it, or where the kernel allows none,
 Landlock's port rule, which lets a program that ignores the proxy reach any host
 on the proxy's port.
-On Windows only programs that use the proxy are held to the list.
+On Windows it is held by the filters
+.B firewall install
+puts in place; without them only programs that use the proxy are held to the
+list.
 .TP
 .B allowed_hosts
 Each

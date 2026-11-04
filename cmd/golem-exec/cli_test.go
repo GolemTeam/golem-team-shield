@@ -36,8 +36,9 @@ func newFakeSetup(t *testing.T, goos string) *fakeSetup {
 	f.setup = &setup{
 		home: t.TempDir(), goos: goos, exe: os.Args[0], loginShell: "/bin/zsh",
 		stdout: &f.out, stderr: &f.errs,
-		canJail:   func() bool { return true },
-		agentRuns: func() bool { return false },
+		canJail:    func() bool { return true },
+		firewallOn: func() (bool, error) { return false, nil },
+		agentRuns:  func() bool { return false },
 		selfTest: func(shim, command string) (int, error) {
 			f.ran = append(f.ran, command)
 			if strings.HasPrefix(command, "cat ") {
@@ -231,7 +232,7 @@ func TestStatusSaysWhereCommandsWriteAndWhatTheyReach(t *testing.T) {
 		{"darwin", shield.Config{Writes: shield.WritesWorkspace, AllowWrite: []string{"~/go/bin"}, Network: shield.NetworkAllowlist, AllowedHosts: []string{"github.com", "*.npmjs.org"}},
 			[]string{"the project, temp and tool caches, and ~/go/bin", "allowed hosts only, through a proxy: github.com, *.npmjs.org"}},
 		{"linux", shield.Config{Network: shield.NetworkAllowlist}, []string{"none yet", "Landlock's port rule"}},
-		{"windows", shield.Config{Writes: shield.WritesWorkspace, Network: shield.NetworkAllowlist}, []string{"the project, temp and tool caches", "binds only those that use it"}},
+		{"windows", shield.Config{Writes: shield.WritesWorkspace, Network: shield.NetworkAllowlist}, []string{"the project, temp and tool caches", "golem-exec firewall install"}},
 		{"darwin", shield.Config{Lockdown: true, Network: shield.NetworkAllowlist}, []string{"network      none (lockdown)"}},
 	}
 	for _, c := range cases {
@@ -245,6 +246,25 @@ func TestStatusSaysWhereCommandsWriteAndWhatTheyReach(t *testing.T) {
 				t.Errorf("%s %+v: missing %q:\n%s", c.goos, c.cfg, w, f.out.String())
 			}
 		}
+	}
+}
+
+func TestFirewallIsForWindowsAndSaysWhetherItHolds(t *testing.T) {
+	f := newFakeSetup(t, "darwin")
+	if code := runCommand(f.setup, []string{"firewall", "install"}); code != 1 || !strings.Contains(f.errs.String(), "for Windows") {
+		t.Errorf("macOS: exit %d %s", code, f.errs.String())
+	}
+	if code := runCommand(f.setup, []string{"firewall"}); code != 2 {
+		t.Errorf("no action: exit %d", code)
+	}
+	w := newFakeSetup(t, "windows")
+	w.firewallOn = func() (bool, error) { return true, nil }
+	if err := shield.WriteConfig(shield.ConfigPath(w.home), shield.Config{Network: shield.NetworkAllowlist}); err != nil {
+		t.Fatal(err)
+	}
+	w.status()
+	if !strings.Contains(w.out.String(), "held by the shield's Windows firewall filters") {
+		t.Errorf("status:\n%s", w.out.String())
 	}
 }
 

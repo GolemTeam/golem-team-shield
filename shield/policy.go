@@ -46,6 +46,10 @@ type Policy struct {
 	AllowWrite   []string `json:"allow_write,omitempty"`
 	Network      Network  `json:"network,omitempty"`
 	AllowedHosts []string `json:"allowed_hosts,omitempty"`
+	// JailPastApproval is for the agents' hooks, not the jail: whether to
+	// rewrite into it the commands of agents whose own approval would then see
+	// only the rewrite.
+	JailPastApproval bool `json:"jail_past_approval,omitempty"`
 }
 
 func AllGrants() Grants { return Grants{Agent: true, Docker: true, Cloud: true} }

@@ -43,6 +43,9 @@ type Config struct {
 	// proxy, with everything else refused; "open" leaves the network be.
 	Network      Network  `json:"network"`
 	AllowedHosts []string `json:"allowed_hosts"`
+	// JailPastApproval also jails the agents whose own approval would see
+	// only the jail's rewrite (docs/design-local-shield.md, Other clients).
+	JailPastApproval bool `json:"jail_past_approval"`
 }
 
 const maxConfigBytes = 64 << 10
@@ -129,6 +132,7 @@ func (c Config) Policy() Policy {
 	p.EnvAllow, p.EnvDeny = c.EnvAllow, c.EnvDeny
 	p.Writes, p.AllowWrite = c.Writes, c.AllowWrite
 	p.Network, p.AllowedHosts = c.Network, c.AllowedHosts
+	p.JailPastApproval = c.JailPastApproval
 	return p
 }
 
