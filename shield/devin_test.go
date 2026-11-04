@@ -36,10 +36,11 @@ func TestDevinNotesTheSessionWhereTheCommandRuns(t *testing.T) {
 	if got := HookSession(home, "devin", "/work/repo", time.Now()); got != "dv-1" {
 		t.Fatalf("session in cwd: %q", got)
 	}
+	other := filepath.Join(home, "other")
 	call := devinCall("ls")
-	call["tool_input"].(map[string]any)["cwd"] = "/work/other"
+	call["tool_input"].(map[string]any)["cwd"] = other
 	NoteDevinSession(home, call)
-	if got := HookSession(home, "devin", "/work/other", time.Now()); got != "dv-1" {
+	if got := HookSession(home, "devin", other, time.Now()); got != "dv-1" {
 		t.Fatalf("session in the call's cwd: %q", got)
 	}
 }

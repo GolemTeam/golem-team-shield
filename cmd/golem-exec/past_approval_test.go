@@ -35,7 +35,8 @@ func TestOnWindowsAllAgentsJailsCodexGeminiAndCopilot(t *testing.T) {
 	if !strings.Contains(string(cfg), `"network": "open"`) || !strings.Contains(string(cfg), `"jail_past_approval": true`) || strings.Contains(string(cfg), "null") {
 		t.Fatalf("shield.json: %s", cfg)
 	}
-	if b, _ := os.ReadFile(hooks); !strings.Contains(string(b), f.hookCommand("codex")) || !strings.Contains(f.hookCommand("codex"), "golem-exec.exe hook codex") {
+	quoted, _ := json.Marshal(f.hookCommand("codex"))
+	if b, _ := os.ReadFile(hooks); !strings.Contains(string(b), string(quoted)) || !strings.Contains(f.hookCommand("codex"), "golem-exec.exe hook codex") {
 		t.Fatalf("hooks.json: %s", b)
 	}
 	if b, _ := os.ReadFile(filepath.Join(f.home, ".gemini", "settings.json")); !strings.Contains(string(b), "hook gemini-cli") {
