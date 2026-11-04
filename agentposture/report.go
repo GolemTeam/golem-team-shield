@@ -99,6 +99,21 @@ func writeProtections(w io.Writer, agents []string, items []Item) {
 		if best != nil && strings.TrimSpace(best.Detail) != "" {
 			detail = best.Detail
 		}
+		// With nothing covering the agent, say every way it isn't: the
+		// sandbox first, then the jail.
+		if best != nil && protectionCover(*best) == 0 {
+			var said []string
+			for _, jail := range []bool{false, true} {
+				for _, it := range items {
+					if it.Client == client && (it.Check == "shell_jail") == jail && strings.TrimSpace(it.Detail) != "" {
+						said = append(said, it.Detail)
+					}
+				}
+			}
+			if len(said) > 0 {
+				detail = strings.Join(said, "; ")
+			}
+		}
 		// Without a shell_jail item the jail was not looked for, which is not
 		// the same as its being absent.
 		if !jailSeen && (best == nil || protectionCover(*best) == 0) {

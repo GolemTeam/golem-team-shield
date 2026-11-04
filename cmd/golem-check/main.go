@@ -13,6 +13,7 @@ import (
 	"runtime"
 
 	"github.com/GolemTeam/golem-team-shield/agentposture"
+	"github.com/GolemTeam/golem-team-shield/shield"
 )
 
 // version is set at release (-X main.version=...).
@@ -33,7 +34,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "golem-check "+version)
 		return 0
 	}
-	res := agentposture.ScanAll(agentposture.DefaultEnv())
+	env := agentposture.DefaultEnv()
+	res := agentposture.ScanAll(env)
+	res.Add(shellJailItems(shield.CoverageOf(shield.CoverageEnv{Home: env.Home, GOOS: env.GOOS}))...)
 	if *asJSON {
 		items := res.Items
 		if items == nil {
@@ -71,4 +74,22 @@ func installCommand(goos string) string {
 		return "iwr -useb https://app.golem.team/install.ps1 | iex   (PowerShell, as administrator)"
 	}
 	return "curl -fsSL https://app.golem.team/install.sh | sh"
+}
+
+// shellJailItems are the shell jail's coverage as the report's protections:
+// credit for each agent whose commands it jails. The Golem agent's `golem
+// check` has the same.
+func shellJailItems(cov []shield.AgentCoverage) []agentposture.Item {
+	items := make([]agentposture.Item, 0, len(cov))
+	for _, c := range cov {
+		sev := agentposture.Suspicious
+		if c.Coverage == shield.Jailed {
+			sev = agentposture.Info
+		}
+		items = append(items, agentposture.Item{
+			Client: c.Client, Area: agentposture.AreaProtections, Check: "shell_jail", Severity: sev,
+			Location: c.Location, Setting: "shell", Value: string(c.Coverage), Detail: c.Detail,
+		})
+	}
+	return items
 }

@@ -350,14 +350,7 @@ func (s *setup) status() int {
 		shim = cs.Shim
 	}
 	fmt.Fprintf(s.stdout, "shim         %s\n", shim)
-	switch current := s.currentShell(cs); {
-	case current == "":
-		fmt.Fprintf(s.stdout, "Claude Code  %s is not set, so its commands are not jailed\n", cs.Var())
-	case cs.Ours(current):
-		fmt.Fprintf(s.stdout, "Claude Code  %s = %s (jailed)\n", cs.Var(), current)
-	default:
-		fmt.Fprintf(s.stdout, "Claude Code  %s = %s (not the shim, so not jailed)\n", cs.Var(), current)
-	}
+	s.statusAgents()
 	if s.canJail() {
 		fmt.Fprintf(s.stdout, "kernel jail  available\n")
 	} else {

@@ -65,7 +65,12 @@ type Result struct {
 	Read   []string
 }
 
-// ScanAll is Scan with the agents and areas it covered.
+// MaxReportItems caps ScanAll, which reports more than the settings Scan does.
+const MaxReportItems = 1000
+
+// ScanAll is Scan with the agents and areas it covered, and the config scan.
+// Scan stays the settings alone: it is what the Golem agent's posture reporter
+// sends, and the agent alerts on the config scan's findings separately.
 func ScanAll(env Env) Result {
 	s := scanEnv(env)
 	if s == nil {
@@ -74,6 +79,25 @@ func ScanAll(env Env) Result {
 	res := Result{Items: s.items, Agents: sortedSet(s.agents)}
 	if len(res.Agents) > 0 {
 		s.read[AreaRunModes], s.read[AreaPermissions], s.read[AreaProtections] = true, true, true
+	}
+	skip := ManagedAssetPaths(env.Home)
+	cs := ScanConfig(env, skip)
+	for a := range cs.Read {
+		if a != AreaInstructions {
+			s.read[a] = true
+		}
+	}
+	// The config scan's own instruction checks stay for the Golem agent's
+	// alerts; the report reads the same files with defscan's rules instead.
+	for _, it := range cs.Items() {
+		if it.Area != AreaInstructions {
+			res.Items = append(res.Items, it)
+		}
+	}
+	res.Items = append(res.Items, s.instructionItems(skip)...)
+	Sort(res.Items)
+	if len(res.Items) > MaxReportItems {
+		res.Items = res.Items[:MaxReportItems]
 	}
 	res.Read = sortedSet(s.read)
 	return res

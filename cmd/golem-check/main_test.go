@@ -91,3 +91,35 @@ func TestAnUnknownFlagIsAUsageError(t *testing.T) {
 		t.Errorf("exit %d, want 2", code)
 	}
 }
+
+func TestTheShellJailCountsAsAProtection(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the Windows shim is bash.exe, set through CLAUDE_CODE_GIT_BASH_PATH")
+	}
+	withSettings(t, `{}`)
+	home := os.Getenv("HOME")
+	shim := filepath.Join(home, ".golem", "bin", "golem-zsh")
+	if err := os.WriteFile(filepath.Join(home, ".claude", "settings.json"), []byte(`{"env":{"CLAUDE_CODE_SHELL":"`+shim+`"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(shim), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var out, errs bytes.Buffer
+	if code := run([]string{"-json"}, &out, &errs); code != 0 {
+		t.Fatalf("exit %d: %s", code, errs.String())
+	}
+	var items []struct{ Client, Area, Check, Value string }
+	if err := json.Unmarshal(out.Bytes(), &items); err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range items {
+		if it.Check == "shell_jail" && it.Client == "claude-code" && it.Value == "jailed" && it.Area == "protections" {
+			return
+		}
+	}
+	t.Fatalf("no jailed shell_jail item for Claude Code in %s", out.String())
+}

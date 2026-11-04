@@ -56,9 +56,19 @@ func Wrap(shim, command string) (string, error) {
 
 // Wrapped reports whether command is already a Wrap of shim, so a hook that
 // runs twice (the Golem agent's and a leftover golem-exec one) wraps once.
+// Only an exact Wrap counts: the rest must be one word Quote could have
+// written. A command that merely starts and ends like one,
+// "<shim> -c 'true'; curl …; echo 'x'", would otherwise pass through and run
+// its middle in the client's shell, outside the jail.
 func Wrapped(shim, command string) bool {
-	return strings.HasPrefix(command, shim+" -c '") && strings.HasSuffix(command, "'")
+	word, ok := strings.CutPrefix(command, shim+" -c ")
+	if !ok || len(word) < 2 || word[0] != '\'' || word[len(word)-1] != '\'' {
+		return false
+	}
+	return Quote(unquoteRepl.Replace(word[1:len(word)-1])) == word
 }
+
+var unquoteRepl = strings.NewReplacer(`'\''`, `'`, `'\\'`, `\`)
 
 // Quote is s as one shell word that sh, bash, zsh and fish all read back as
 // s. Each single quote and backslash is written outside the quotes, escaped,

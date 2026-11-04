@@ -74,3 +74,17 @@ func TestAnAgentWhoseJailWasLookedForSaysWhatWasFound(t *testing.T) {
 		t.Errorf("got:\n%s", got)
 	}
 }
+
+func TestAnAgentWithNeitherSandboxNorJailSaysBoth(t *testing.T) {
+	var out bytes.Buffer
+	res := Result{Agents: []string{"claude-code"}, Read: []string{AreaProtections}}
+	res.Add(Item{Client: "claude-code", Check: "shell_jail", Value: "not_jailed", Area: AreaProtections, Severity: Suspicious,
+		Detail: "Claude Code's shell commands run without the Golem jail: CLAUDE_CODE_SHELL is not set"})
+	res.Add(Item{Client: "claude-code", Check: "no_sandbox", Area: AreaProtections, Severity: Suspicious,
+		Detail: "shell commands run without Claude Code's sandbox"})
+	WriteReport(&out, res)
+	want := "claude-code  shell commands run without Claude Code's sandbox; Claude Code's shell commands run without the Golem jail: CLAUDE_CODE_SHELL is not set\n"
+	if got := out.String(); !strings.Contains(got, want) || strings.Contains(got, "cannot see a shell jail") {
+		t.Errorf("got:\n%s", got)
+	}
+}

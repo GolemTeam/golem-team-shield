@@ -644,17 +644,19 @@ var editorApps = []struct{ client, dir string }{
 // not counted as agents on their settings alone.
 var aiEditors = map[string]bool{"cursor": true, "windsurf": true, "antigravity": true}
 
-func (s *scan) editorBase() string {
-	switch s.env.GOOS {
+func (s *scan) editorBase() string { return editorBaseOf(s.env) }
+
+func editorBaseOf(env Env) string {
+	switch env.GOOS {
 	case "darwin":
-		return filepath.Join(s.env.Home, "Library", "Application Support")
+		return filepath.Join(env.Home, "Library", "Application Support")
 	case "windows":
-		return s.env.AppData
+		return env.AppData
 	}
-	if s.env.XDG != "" {
-		return s.env.XDG
+	if env.XDG != "" {
+		return env.XDG
 	}
-	return filepath.Join(s.env.Home, ".config")
+	return filepath.Join(env.Home, ".config")
 }
 
 func (s *scan) editors() {
