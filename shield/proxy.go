@@ -21,9 +21,10 @@ import (
 //
 // Names are checked after they resolve and the dial goes to the checked
 // address, so a name can't re-resolve elsewhere between check and connect.
-// Loopback, link-local and multicast addresses are never dialled: they are
-// the local daemons and the cloud metadata service. A private address is
-// dialled only for a host the list names, never through *.
+// Link-local and multicast addresses are never dialled, nor is loopback
+// unless the list names localhost itself: they are the cloud metadata service
+// and the local daemons. A private address is dialled only for a host the
+// list names, never through *.
 type Proxy struct {
 	hosts []string
 	// Hint ends the line a refused request gets, saying where hosts are
@@ -141,7 +142,11 @@ func (p *Proxy) target(ctx context.Context, hostport string, defaultPort int) (s
 			return "", rec
 		}
 	}
+	loopback := named && isLoopbackName(host)
 	for _, a := range addrs {
+		if loopback && a.Unmap().IsLoopback() {
+			continue
+		}
 		if !p.usable(a, named) {
 			rec.Reason = egressLocalAddress
 			return "", rec

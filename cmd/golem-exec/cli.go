@@ -23,15 +23,16 @@ import (
 
 const cliUsage = `usage: golem-exec <command>
 
-  install [--strict]   jail the shell commands Claude Code, Codex, Gemini CLI and Cursor run
+  install [--strict]   jail the shell commands Claude Code, Codex, Gemini CLI, Cursor and Copilot CLI run
   install --refresh    update an installed shim to this binary, and nothing else
   status               show what is installed and the policy commands get
   test                 check that the jail blocks what it should
   uninstall [--purge]  put the agents' shells back (--purge also removes ~/.golem/shield.json)
   version              print the version
 
-Settings: ~/.golem/shield.json. --strict also keeps cloud credentials out of reach
-and keeps writes to the project, temp and tool caches ("writes": "workspace").
+Settings: ~/.golem/shield.json. A new install keeps writes to the project, temp
+and tool caches ("writes": "workspace"); --strict also keeps cloud credentials
+out of reach.
 `
 
 func isSelf(invoked string) bool {
@@ -183,7 +184,7 @@ func (s *setup) install(strict bool) int {
 	} else if err != nil {
 		fmt.Fprintf(s.stderr, "golem-exec: %s is not valid (%v); every command is locked down until it is fixed\n", cfgPath, err)
 	} else if strict {
-		fmt.Fprintf(s.stdout, "Kept your settings in %s; set \"cloud_credentials\": false and \"writes\": \"workspace\" there for --strict\n", cfgPath)
+		fmt.Fprintf(s.stdout, "Kept your settings in %s; set \"cloud_credentials\": false there for --strict\n", cfgPath)
 	}
 
 	code := 0
@@ -250,7 +251,7 @@ func (s *setup) installShims() error {
 		return err
 	}
 	if s.goos == "windows" {
-		return writeExecutable(s.shims()[0], bin)
+		return s.installWindowsShims(bin)
 	}
 	target := filepath.Join(s.binDir(), "golem-exec")
 	if filepath.Clean(s.exe) != target {
@@ -336,7 +337,7 @@ func (s *setup) uninstall(purge bool) int {
 		code = 1
 	}
 	_ = os.RemoveAll(shield.HookShimDir(s.home))
-	for _, p := range append(s.shims(), filepath.Join(s.binDir(), "golem-exec")) {
+	for _, p := range append(s.shims(), filepath.Join(s.binDir(), "golem-exec"), filepath.Join(s.binDir(), "golem-exec.exe")) {
 		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
 			fmt.Fprintf(s.stderr, "golem-exec: could not remove %s: %v\n", p, err)
 			code = 1
@@ -398,8 +399,6 @@ func (s *setup) statusConfinement(p shield.Policy) {
 		fmt.Fprintln(s.stdout, "writes       the project and temp only (lockdown)")
 		fmt.Fprintln(s.stdout, "network      none (lockdown)")
 		return
-	case p.ConfinedWrites() && s.goos == "windows":
-		fmt.Fprintln(s.stdout, "writes       workspace asked for, but Windows can't hold it yet: anywhere but the protected files")
 	case p.ConfinedWrites():
 		extra := ""
 		if len(p.AllowWrite) > 0 {

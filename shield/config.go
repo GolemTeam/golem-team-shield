@@ -52,22 +52,22 @@ var envPatternRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*\*?$`)
 // ConfigPath is where a machine's shield settings live.
 func ConfigPath(home string) string { return filepath.Join(home, ".golem", "shield.json") }
 
-// DefaultConfig is the baseline, written out in full so every setting is there
-// to edit.
+// DefaultConfig is what a new install writes, in full so every setting is
+// there to edit: the baseline, with writes kept to the project as in Claude
+// Code's sandbox. A file from before writes existed has none, and keeps
+// writing anywhere.
 func DefaultConfig() Config {
 	on := true
 	return Config{Enforce: &on, SSHAgent: &on, Docker: &on, CloudCredentials: &on, EnvAllow: []string{}, EnvDeny: []string{},
-		Writes: WritesAnywhere, AllowWrite: []string{}, Network: NetworkOpen, AllowedHosts: []string{}}
+		Writes: WritesWorkspace, AllowWrite: []string{}, Network: NetworkOpen, AllowedHosts: []string{}}
 }
 
-// StrictConfig is the baseline without the cloud credentials and with writes
-// kept to the workspace, for a machine whose agents should not reach a cloud
-// account from a shell nor leave anything behind outside the project.
+// StrictConfig is the default without the cloud credentials, for a machine
+// whose agents should not reach a cloud account from a shell.
 func StrictConfig() Config {
 	c := DefaultConfig()
 	off := false
 	c.CloudCredentials = &off
-	c.Writes = WritesWorkspace
 	return c
 }
 

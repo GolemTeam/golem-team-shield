@@ -60,8 +60,8 @@ type RunRecord struct {
 	DurationMS  int64    `json:"duration_ms"`
 	DroppedEnv  []string `json:"dropped_env,omitempty"`
 	// Writes is "workspace" when the jail kept a clean session's writes to
-	// its roots, and "deny-list" when the policy asked for that and the jail
-	// could not (Windows).
+	// its roots (on Windows, through a low-integrity shell). "deny-list" is
+	// what an older Windows shim, which couldn't, reported.
 	Writes string `json:"writes,omitempty"`
 	// Net is how an allowlisted network was held; Egress what the proxy saw,
 	// and EgressOverflow how many more distinct requests it only counted.

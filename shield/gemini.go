@@ -104,7 +104,7 @@ func geminiCoverage(env CoverageEnv) (AgentCoverage, bool) {
 	settings := filepath.Join(env.Home, ".gemini", "settings.json")
 	c := AgentCoverage{Client: "gemini-cli", Label: "Gemini CLI", Coverage: NotJailed, Location: tilde(env.Home, settings)}
 	if env.GOOS == "windows" {
-		c.Detail = "Gemini CLI runs PowerShell on Windows, which the Golem jail doesn't cover yet"
+		c.Detail = "On Windows Golem doesn't rewrite Gemini CLI's PowerShell commands: one \"always allow\" would then approve every command"
 		return c, true
 	}
 	hooked := false

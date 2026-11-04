@@ -97,3 +97,33 @@ func TestWindowsShimKeepsBrowserAndChatStoresFromTheCommand(t *testing.T) {
 		t.Errorf("exit %d, an app's store was reachable: %s", code, out)
 	}
 }
+
+func TestWindowsWorkspaceWritesStayInTheProject(t *testing.T) {
+	bash := gitBash(t)
+	w := newFakeWitness(t, shield.Policy{Enforce: true, State: shield.Clean, Grants: shield.AllGrants(), Writes: shield.WritesWorkspace})
+	s, stdout, stderr := testShim(t, w.URL)
+	s.cwd = filepath.Join(s.cwd, "repo")
+	temp := t.TempDir()
+	for _, d := range []string{filepath.Join(s.cwd, ".git"), s.home} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(s.home, "notes"), []byte("NOTES\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(s.cwd)
+	s.env = append(s.env, "SYSTEMROOT="+os.Getenv("SYSTEMROOT"), "TEMP="+temp, "TMP="+temp)
+	script := `echo x > ws.txt && echo WS; echo x > "$TEMP/t" && echo TMP; cat "$HOME/notes"; echo x >> "$HOME/notes" && echo HOMEWRITE; exit 0`
+	code := s.run(bash, []string{"-c", script})
+	out := stdout.String()
+	if code != 0 || !strings.Contains(out, "WS") || !strings.Contains(out, "TMP") || !strings.Contains(out, "NOTES") {
+		t.Fatalf("exit %d: the project, temp or a read failed at low integrity: %s / %s", code, out, stderr.String())
+	}
+	if strings.Contains(out, "HOMEWRITE") {
+		t.Errorf("a write left the project: %s", out)
+	}
+	if len(w.runs) != 1 || w.runs[0].Writes != "workspace" {
+		t.Errorf("runs %+v", w.runs)
+	}
+}

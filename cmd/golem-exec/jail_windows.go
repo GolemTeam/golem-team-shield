@@ -64,9 +64,6 @@ func (s *shim) jailed(rec *shield.RunRecord, p shield.Policy, tmp string, argv, 
 	}
 	rec.Jail = shield.JailToken
 	rec.PolicyHash = j.Hash()
-	if p.ConfinedWrites() {
-		rec.Writes = "deny-list"
-	}
 	if p.Proxied() {
 		rec.Net = shield.NetAdvisory
 	}
@@ -87,10 +84,74 @@ func (s *shim) jailed(rec *shield.RunRecord, p shield.Policy, tmp string, argv, 
 		return false
 	}
 	defer tok.Close()
+	if j.LowIntegrity {
+		for _, r := range j.LowRoots {
+			_ = labelLow(r)
+		}
+		if err := lowerIntegrity(tok); err != nil {
+			return false
+		}
+		rec.Writes = string(shield.WritesWorkspace)
+	}
 	cmd := exec.Command(argv[0])
 	cmd.SysProcAttr = &syscall.SysProcAttr{Token: syscall.Token(tok), CmdLine: commandLine(argv)}
 	rec.ExitCode = s.start(cmd, env, nil)
 	return true
+}
+
+// lowLabel is a low mandatory label that every file and folder below
+// inherits, with the default no-write-up policy.
+const lowLabel = "S:(ML;OICI;NW;;;LW)"
+
+const systemMandatoryLabelACEType = 0x11
+
+// labelLow lets a low-integrity shell write path and everything below it. A
+// directory already labelled low is left as it is, so the walk that relabels
+// what is inside happens once. A root it can't label stays unwritable to the
+// shell, which only makes the jail stricter.
+func labelLow(path string) error {
+	low, err := windows.CreateWellKnownSid(windows.WinLowLabelSid)
+	if err != nil {
+		return err
+	}
+	if sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.LABEL_SECURITY_INFORMATION); err == nil {
+		if sacl, _, err := sd.SACL(); err == nil && sacl != nil && hasLabel(sacl, low) {
+			return nil
+		}
+	}
+	want, err := windows.SecurityDescriptorFromString(lowLabel)
+	if err != nil {
+		return err
+	}
+	sacl, _, err := want.SACL()
+	if err != nil {
+		return err
+	}
+	return windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.LABEL_SECURITY_INFORMATION, nil, nil, nil, sacl)
+}
+
+func hasLabel(acl *windows.ACL, sid *windows.SID) bool {
+	for i := uint32(0); i < uint32(acl.AceCount); i++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if windows.GetAce(acl, i, &ace) != nil || ace.Header.AceType != systemMandatoryLabelACEType {
+			continue
+		}
+		if (*windows.SID)(unsafe.Pointer(&ace.SidStart)).Equals(sid) && ace.Header.AceFlags&windows.OBJECT_INHERIT_ACE != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// lowerIntegrity sets tok to low integrity. Lowering a token's own level
+// needs no privilege, and everything the shell starts inherits it.
+func lowerIntegrity(tok windows.Token) error {
+	low, err := windows.CreateWellKnownSid(windows.WinLowLabelSid)
+	if err != nil {
+		return err
+	}
+	tml := windows.Tokenmandatorylabel{Label: windows.SIDAndAttributes{Sid: low, Attributes: windows.SE_GROUP_INTEGRITY}}
+	return windows.SetTokenInformation(tok, windows.TokenIntegrityLevel, (*byte)(unsafe.Pointer(&tml)), tml.Size())
 }
 
 // commandLine passes on the string the agent gave the shim, unchanged: Git

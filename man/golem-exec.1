@@ -25,8 +25,8 @@ arguments, inside a kernel jail: Seatbelt on macOS, Landlock and seccomp on
 Linux, a restricted token on Windows.
 Everything the command starts inherits the jail.
 .PP
-Codex, Gemini CLI and Cursor have no setting that names their shell, so on
-macOS and Linux
+Codex, Gemini CLI, Cursor and Copilot CLI have no setting that names their
+shell, so on macOS and Linux
 .B golem-exec
 is their pre-tool hook instead
 .RB ( "golem-exec hook" " " \fIagent\fR ),
@@ -35,8 +35,8 @@ and rewrites each shell command to
 (or
 .BR zsh ),
 which the agent then asks about and runs as usual.
-Cursor refuses the command if the hook fails; Codex and Gemini CLI run it
-unjailed.
+Cursor and Copilot CLI refuse the command if the hook fails; Codex and
+Gemini CLI run it unjailed.
 .PP
 Run by its own name it manages that setup.
 Run under a shell's name
@@ -90,9 +90,7 @@ Restart your agents afterwards.
 .B install \-\-strict
 As
 .BR install ,
-and a new settings file also keeps cloud credentials out of reach and writes
-to the project
-.RB ( "\(dqwrites\(dq: \(dqworkspace\(dq" ).
+and a new settings file also keeps cloud credentials out of reach.
 .TP
 .B install \-\-refresh
 Replace an installed shim with this binary and change nothing else.
@@ -154,9 +152,8 @@ and others) and
 .BR allow_write ;
 .B \(dqanywhere\(dq
 denies only the protected files.
-Windows keeps
-.B \(dqanywhere\(dq
-for now.
+On Windows the shell runs at low integrity and the writable directories are
+labelled low, a label they keep.
 .TP
 .B allow_write
 More places a
@@ -186,7 +183,16 @@ Each
 (its subdomains) or
 .B *
 (any public host).
-Loopback and link-local addresses are never reached.
+.B localhost
+opens loopback, a test server the command starts included; without it loopback
+is refused.
+Link-local addresses are never reached.
+With the network confined, macOS also refuses
+.BR open ,
+.B osascript
+and
+.BR shortcuts ,
+which would hand a URL to another app.
 .PP
 A jailed command can neither read nor write
 .IR ~/.golem ,
@@ -209,8 +215,8 @@ The settings.
 .I ~/.claude/settings.json
 Where Claude Code is pointed at the shim.
 .TP
-.IR ~/.codex/hooks.json ", " ~/.gemini/settings.json ", " ~/.cursor/hooks.json
-Where the hook is registered with Codex, Gemini CLI and Cursor.
+.IR ~/.codex/hooks.json ", " ~/.gemini/settings.json ", " ~/.cursor/hooks.json ", " ~/.copilot/hooks/golem-shield.json
+Where the hook is registered with Codex, Gemini CLI, Cursor and Copilot CLI.
 .SH ENVIRONMENT
 .TP
 .B GOLEM_WITNESS_URL

@@ -20,6 +20,9 @@ type pluginAgent struct {
 	shim          string
 	windows       string
 	update        string
+	// windowsRewrites marks a plugin that rewrites PowerShell commands on
+	// Windows; "" is one that can't be jailed there yet, said by windows.
+	windowsRewrites string
 }
 
 var pluginAgents = []pluginAgent{
@@ -43,9 +46,9 @@ var pluginAgents = []pluginAgent{
 		plugin: func(env CoverageEnv) string {
 			return filepath.Join(openclawDir(env), "extensions", "golem", "index.js")
 		},
-		rewrites: "export function shieldRewrite(",
-		windows:  "OpenClaw runs PowerShell on Windows, which the Golem jail doesn't cover yet",
-		update:   "golem setup-client",
+		rewrites:        "export function shieldRewrite(",
+		windowsRewrites: "export function shieldWrapPowerShell(",
+		update:          "golem setup-client",
 	},
 }
 
@@ -63,12 +66,15 @@ func pluginCoverage(a pluginAgent) func(CoverageEnv) (AgentCoverage, bool) {
 		}
 		path := a.plugin(env)
 		c := AgentCoverage{Client: a.client, Label: a.label, Coverage: NotJailed, Location: tilde(env.Home, path)}
-		if env.GOOS == "windows" {
+		rewrites := a.rewrites
+		shell := a.shim
+		switch {
+		case env.GOOS == "windows" && a.windowsRewrites == "":
 			c.Detail = a.windows
 			return c, true
-		}
-		shell := a.shim
-		if shell == "" {
+		case env.GOOS == "windows":
+			rewrites, shell = a.windowsRewrites, "pwsh.exe"
+		case shell == "":
 			shell = "bash"
 			if strings.Contains(filepath.Base(env.LoginShell), "zsh") {
 				shell = "zsh"
@@ -79,7 +85,7 @@ func pluginCoverage(a pluginAgent) func(CoverageEnv) (AgentCoverage, bool) {
 		switch {
 		case err != nil:
 			c.Detail = a.label + "'s shell commands run without the Golem jail: the Golem plugin isn't installed"
-		case !strings.Contains(string(src), a.rewrites):
+		case !strings.Contains(string(src), rewrites):
 			c.Detail = a.label + "'s Golem plugin predates the jail: run `" + a.update + "` to update it"
 		case !env.ShimReady(shim):
 			c.Detail = a.label + "'s plugin would run its shell commands in the Golem jail, but " + tilde(env.Home, shim) + " is not installed"

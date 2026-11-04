@@ -53,7 +53,7 @@ func TestWrapVectorsAreWrapsOwn(t *testing.T) {
 		}
 	}
 	got, err := os.ReadFile(path)
-	if err != nil || strings.ReplaceAll(string(got), "\r\n", "\n") != string(want) {
+	if err != nil || lf(got) != string(want) {
 		t.Fatalf("%s is not what Wrap does; run go test -run WrapVectors -update", path)
 	}
 }
@@ -82,7 +82,41 @@ func TestHookSessionVectorsAreNoteHookSessionsOwn(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got, err := os.ReadFile(path); err != nil || strings.ReplaceAll(string(got), "\r\n", "\n") != string(want) {
+	if got, err := os.ReadFile(path); err != nil || lf(got) != string(want) {
 		t.Fatalf("%s is not what NoteHookSession does; run go test -run Vectors -update", path)
 	}
 }
+
+func powerShellVectors() []wrapVector {
+	shims := []string{`C:\Users\dev\.golem\bin\hook\pwsh.exe`, `C:\Users\O'Brien Smith\.golem\bin\hook\pwsh.exe`}
+	var out []wrapVector
+	for _, s := range shims {
+		good, _ := WrapPowerShell(s, "git status")
+		for _, c := range append(append([]string{}, psCommands...), "", " ", "a\x00b", good, good+"; whoami") {
+			v := wrapVector{Shim: s, Command: c}
+			if w, err := WrapPowerShell(s, c); err == nil {
+				v.Wrapped = &w
+			}
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func TestPowerShellVectorsAreWrapPowerShellsOwn(t *testing.T) {
+	path := filepath.Join("testdata", "powershell_wrap_vectors.json")
+	want, _ := json.MarshalIndent(powerShellVectors(), "", "  ")
+	want = append(want, '\n')
+	if *updateVectors {
+		if err := os.WriteFile(path, want, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, err := os.ReadFile(path); err != nil || lf(got) != string(want) {
+		t.Fatalf("%s is not what WrapPowerShell does; run go test -run Vectors -update", path)
+	}
+}
+
+// lf is a checked-in file as written: a Windows checkout may have turned its
+// line ends into CRLF.
+func lf(b []byte) string { return strings.ReplaceAll(string(b), "\r\n", "\n") }

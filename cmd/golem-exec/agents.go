@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	"github.com/GolemTeam/golem-team-shield/internal/jsonobject"
 	"github.com/GolemTeam/golem-team-shield/shield"
@@ -63,6 +66,7 @@ func (s *setup) wireAgents(remove bool) int {
 		return 0
 	}
 	code := 0
+	code |= s.wireCopilot(remove)
 	for _, a := range s.agentHooks() {
 		edit := a.wire
 		if remove {
@@ -83,6 +87,34 @@ func (s *setup) wireAgents(remove bool) int {
 	return code
 }
 
+// wireCopilot writes or removes golem-exec's own file in Copilot CLI's hooks
+// directory, which Copilot reads every file of.
+func (s *setup) wireCopilot(remove bool) int {
+	if !shield.CopilotInstalled(s.home) {
+		return 0
+	}
+	path := shield.CopilotHooksFile(s.home)
+	if remove {
+		if err := os.Remove(path); err == nil {
+			fmt.Fprintln(s.stdout, "Copilot CLI: removed the hook that runs its shell commands in the Golem shield")
+		}
+		return 0
+	}
+	want := shield.CopilotHookFile(filepath.Join(s.binDir(), "golem-exec"))
+	if got, err := os.ReadFile(path); err == nil && string(got) == string(want) {
+		return 0
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err == nil {
+		err = os.WriteFile(path, want, 0o600)
+		if err == nil {
+			fmt.Fprintln(s.stdout, "Copilot CLI: its shell commands run in the Golem shield")
+			return 0
+		}
+	}
+	fmt.Fprintf(s.stderr, "golem-exec: could not write %s\n", path)
+	return 1
+}
+
 func (s *setup) editJSON(path string, edit func(*jsonobject.Object) ([]string, error)) ([]string, error) {
 	doc, _, err := jsonobject.ReadFile(path)
 	if err != nil {
@@ -100,8 +132,8 @@ func (s *setup) editJSON(path string, edit func(*jsonobject.Object) ([]string, e
 // client then runs the call unchanged; a command it reads but can't wrap is
 // refused by the answer itself.
 func (s *setup) hook(args []string) int {
-	if len(args) != 1 || (args[0] != "codex" && args[0] != "gemini-cli" && args[0] != "cursor") {
-		fmt.Fprintln(s.stderr, "usage: golem-exec hook codex|gemini-cli|cursor")
+	if len(args) != 1 || !slices.Contains(shield.FreeHookClients(), args[0]) {
+		fmt.Fprintln(s.stderr, "usage: golem-exec hook "+strings.Join(shield.FreeHookClients(), "|"))
 		return 2
 	}
 	var in map[string]any
@@ -117,6 +149,12 @@ func (s *setup) hook(args []string) int {
 	case "cursor":
 		if shim := shield.HookShim(s.home, s.loginShell); s.shimRuns(shim) {
 			out = shield.CursorRewrite(shim, in)
+		}
+	case "copilot":
+		if shim := filepath.Join(shield.HookShimDir(s.home), "bash"); s.shimRuns(shim) {
+			if out = shield.CopilotRewrite(shim, in); out != nil {
+				shield.NoteCopilotSession(s.home, in)
+			}
 		}
 	case "gemini-cli":
 		if shim := filepath.Join(shield.HookShimDir(s.home), "bash"); s.shimRuns(shim) {
@@ -134,4 +172,27 @@ func (s *setup) hook(args []string) int {
 
 func (s *setup) shimRuns(shim string) bool {
 	return s.goos != "windows" && shield.ReadyShim(s.goos)(shim)
+}
+
+// installWindowsShims copies this binary to bash.exe for Claude Code, to
+// golem-exec.exe for the hooks to run, and to the PowerShell names in the hook
+// directory. Windows has no symlinks without a privilege, so each is a copy.
+func (s *setup) installWindowsShims(bin []byte) error {
+	paths := []string{s.shims()[0], filepath.Join(s.binDir(), "golem-exec.exe")}
+	dir := shield.HookShimDir(s.home)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	for _, name := range shield.WindowsHookShells {
+		paths = append(paths, filepath.Join(dir, name))
+	}
+	for _, p := range paths {
+		if filepath.Clean(p) == filepath.Clean(s.exe) {
+			continue
+		}
+		if err := writeExecutable(p, bin); err != nil {
+			return err
+		}
+	}
+	return nil
 }

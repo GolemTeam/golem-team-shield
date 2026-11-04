@@ -11,7 +11,7 @@ anything anywhere.
 
 | | What it does |
 |---|---|
-| `golem-exec` | Runs every shell command Claude Code, Codex, Gemini CLI and Cursor start inside a kernel jail: Seatbelt on macOS, Landlock and seccomp on Linux, a restricted token on Windows. |
+| `golem-exec` | Runs every shell command Claude Code, Codex, Gemini CLI, Cursor and Copilot CLI start inside a kernel jail: Seatbelt on macOS, Landlock and seccomp on Linux, a restricted token on Windows. |
 | `golem-check` | Grades how your agents are set up, from their run modes and permissions to their MCP servers, skills, hooks and stored secrets, and says what to fix. |
 
 ## What the jail stops
@@ -38,7 +38,8 @@ settings tighten it, as far as Claude Code's own sandbox goes or further:
   refused host is named in the command's output.
 - `"writes": "workspace"` keeps writes to the project, temp and the tool
   caches (`~/.cache`, `~/.npm`, `~/go/pkg/mod`, `~/Library/Caches` and
-  others), plus `allow_write`. `--strict` turns it on.
+  others), plus `allow_write`. A new install turns it on; a settings file
+  from before keeps `"anywhere"`.
 
 Lockdown takes the network away entirely (see [Settings](#settings)).
 
@@ -55,11 +56,12 @@ of their own, listed under
 | Codex | Its `PreToolUse` hook rewrites each command to run through the shim. Codex asks you to approve the new hook once | macOS, Linux |
 | Gemini CLI | Its `BeforeTool` hook, the same way | macOS, Linux |
 | Cursor (the editor's agent and `cursor-agent`) | Its `preToolUse` hook, the same way. If the hook fails, the command is refused | macOS, Linux |
+| Copilot CLI | Its `preToolUse` hook, from `~/.copilot/hooks/golem-shield.json`. If the hook fails, the command is refused | macOS, Linux |
 
 The rewritten command is a plain `bash -c '…'` or `zsh -c '…'`, so the agent
 still asks you about the command it meant to run, and your allow and deny rules
-still match it. On Windows, Codex, Gemini CLI and Cursor run PowerShell, which
-the jail doesn't cover yet. On macOS, a command an agent runs inside its own
+still match it. On Windows, Codex, Gemini CLI, Cursor and Copilot CLI run
+PowerShell, which the jail doesn't cover yet. On macOS, a command an agent runs inside its own
 sandbox (Codex's default, or Cursor's or Gemini CLI's when turned on) stays in
 that sandbox, because macOS can't put one sandbox inside another. On Linux the
 two stack.
@@ -177,10 +179,10 @@ command and setting; the release archives carry the pages in `man/`.
 | `cloud_credentials` | `~/.aws`, gcloud, Azure, kube and the Docker, npm and PyPI logins, and the cloud tools' variables (`AWS_*`, `KUBECONFIG` and others). `golem-exec install --strict` writes `false`. |
 | `env_allow` | Secret-shaped variables to keep, by name or as a `PREFIX*`. Ignored in lockdown. |
 | `env_deny` | Variables to remove, by name or as a `PREFIX*`. |
-| `writes` | `"workspace"` keeps writes to the project (the git repository a command runs in, or its working directory outside one), temp, the tool caches and `allow_write`; `"anywhere"` (the default) denies only the protected files. `--strict` writes `"workspace"`. On Windows writes stay as `"anywhere"` for now. |
+| `writes` | `"workspace"` keeps writes to the project (the git repository a command runs in, or its working directory outside one), temp, the tool caches and `allow_write`; `"anywhere"` denies only the protected files. A new install writes `"workspace"`; a file without the key writes anywhere. On Windows the shell runs at low integrity and the project, temp and caches are labelled low, a label they keep. |
 | `allow_write` | More places a `"workspace"` command may write: absolute paths or `~/…`, such as `~/go/bin`. One that holds your home directory is ignored. |
 | `network` | `"allowlist"` lets commands reach only `allowed_hosts`, through a proxy; everything else, DNS included, is refused. `"open"` (the default) leaves the network alone. On Linux it uses a network namespace, or where the kernel allows none, Landlock's port rule, which lets a program that ignores the proxy reach any host on the proxy's port. On Windows only programs that use the proxy are held to the list. |
-| `allowed_hosts` | `example.com`, `*.example.com` (its subdomains) or `*` (any public host, everything recorded). Any port. Loopback and the cloud metadata address are never reachable. |
+| `allowed_hosts` | `example.com`, `*.example.com` (its subdomains) or `*` (any public host, everything recorded). Any port. `localhost` lets commands reach servers on this machine, a test server they start included; without it loopback is refused. The cloud metadata address is never reachable. With the network confined, `open` and AppleScript can't hand a URL to another app on macOS. |
 
 Changes apply to the next command; there is nothing to restart. The jail can
 neither read nor write `~/.golem`, so the agent being watched can't loosen its
@@ -265,7 +267,7 @@ iwr -useb https://app.golem.team/install.ps1 | iex
 
 It replaces what you set up above rather than adding to it. It installs its own
 `golem-exec` in `~/.golem/bin`, under the same names, so `CLAUDE_CODE_SHELL`
-stays as it is, and `golem check` is the same report as `golem-check`. With the
+stays as it is, and `golem check` is the same command as `golem-check`. With the
 agent running, it decides each command's policy and `~/.golem/shield.json` is
 not used.
 

@@ -18,7 +18,7 @@ func TestPluginCoverage(t *testing.T) {
 		{"Hermes with an old plugin", "hermes", ".hermes", ".hermes/plugins/golem/__init__.py", "def on_pre_tool_call():", "darwin", NotJailed, "golem update hermes-plugin"},
 		{"Hermes with no plugin", "hermes", ".hermes", "", "", "darwin", NotJailed, "isn't installed"},
 		{"OpenClaw with the rewrite", "openclaw", ".openclaw/agents", ".openclaw/extensions/golem/index.js", "export function shieldRewrite(toolName) {}", "darwin", Jailed, "through the Golem plugin"},
-		{"OpenClaw on Windows", "openclaw", ".openclaw/agents", ".openclaw/extensions/golem/index.js", "export function shieldRewrite(toolName) {}", "windows", NotJailed, "PowerShell"},
+		{"OpenClaw on Windows", "openclaw", ".openclaw/agents", ".openclaw/extensions/golem/index.js", "export function shieldRewrite(toolName) {}", "windows", NotJailed, "golem setup-client"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -51,16 +51,48 @@ func TestPluginCoverage(t *testing.T) {
 // would turn a jailed agent into one reported as out of date.
 func TestThePluginsCarryWhatCoverageLooksFor(t *testing.T) {
 	for file, mark := range map[string]string{
-		"../../hermes-plugin/golem/__init__.py":        pluginAgents[0].rewrites,
-		"../../witness/assets/openclaw/golem/index.js": pluginAgents[1].rewrites,
-		"../../witness/assets/hooks/cursor-hook.sh":    cursorScriptRewrites,
+		"../../hermes-plugin/golem/__init__.py":                pluginAgents[0].rewrites,
+		"../../witness/assets/openclaw/golem/index.js":         pluginAgents[1].rewrites,
+		"../../witness/assets/openclaw/golem/index.js#windows": pluginAgents[1].windowsRewrites,
+		"../../witness/assets/hooks/cursor-hook.sh":            cursorScriptRewrites,
 	} {
-		src, err := os.ReadFile(file)
+		src, err := os.ReadFile(strings.TrimSuffix(file, "#windows"))
 		if os.IsNotExist(err) {
 			t.Skipf("%s is not in this tree (the public repo)", file)
 		}
 		if err != nil || !strings.Contains(string(src), mark) {
 			t.Errorf("%s doesn't carry %q", file, mark)
 		}
+	}
+}
+
+func TestOpenClawOnWindowsIsJailedThroughThePowerShellShim(t *testing.T) {
+	home := t.TempDir()
+	plugin := filepath.Join(home, ".openclaw", "extensions", "golem", "index.js")
+	for p, body := range map[string]string{
+		filepath.Join(home, ".openclaw", "agents", "x"): "",
+		plugin: "export function shieldRewrite(x) {}\nexport function shieldWrapPowerShell(s, c) {}",
+	} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	line := func(ready func(string) bool) *AgentCoverage {
+		for _, l := range CoverageOf(CoverageEnv{Home: home, GOOS: "windows", ShimReady: ready, CodexHomes: []string{}}) {
+			if l.Client == "openclaw" {
+				return &l
+			}
+		}
+		return nil
+	}
+	var asked string
+	if c := line(func(p string) bool { asked = p; return true }); c == nil || c.Coverage != Jailed || filepath.Base(asked) != "pwsh.exe" {
+		t.Fatalf("got %+v, asked about %q", c, asked)
+	}
+	if c := line(func(string) bool { return false }); c == nil || c.Coverage != NotJailed {
+		t.Fatalf("with no PowerShell shim: %+v", c)
 	}
 }

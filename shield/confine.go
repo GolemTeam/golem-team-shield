@@ -46,12 +46,20 @@ var toolCaches = []string{
 
 var darwinToolCaches = []string{"Library/Caches"}
 
+var windowsToolCaches = []string{
+	"AppData/Local/npm-cache", "AppData/Local/go-build", "AppData/Local/pip", "AppData/Local/Yarn",
+	"AppData/Local/pnpm-store", "AppData/Local/NuGet", ".nuget/packages",
+}
+
 // ToolCaches are the cache directories under home a confined session may
 // write on goos.
 func ToolCaches(home, goos string) []string {
 	rel := toolCaches
-	if goos == "darwin" {
+	switch goos {
+	case "darwin":
 		rel = append(append([]string{}, toolCaches...), darwinToolCaches...)
+	case "windows":
+		rel = append(append([]string{}, toolCaches...), windowsToolCaches...)
 	}
 	out := make([]string, len(rel))
 	for i, r := range rel {
@@ -131,6 +139,27 @@ func CheckHost(h string) error {
 		}
 	}
 	return nil
+}
+
+// AllowsLoopback reports whether an allowlist names the machine itself. Only
+// then may a command reach a server on loopback, its own test server
+// included: the local daemons, the Golem agent among them, are otherwise a
+// way around the list.
+func AllowsLoopback(hosts []string) bool {
+	for _, h := range hosts {
+		if isLoopbackName(h) {
+			return true
+		}
+	}
+	return false
+}
+
+func isLoopbackName(h string) bool {
+	switch strings.Trim(strings.ToLower(h), "[]") {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	}
+	return false
 }
 
 // writeRoots are where a confined session may write, or nil when its writes

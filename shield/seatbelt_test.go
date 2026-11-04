@@ -28,6 +28,8 @@ func TestCleanWithNoGrantsDeniesCredentialsButLeavesWritesAndNetworkOpen(t *test
 		`(literal "/Users/dev/.codex/hooks.json")`,
 		`(literal "/Users/dev/.gemini/settings.json")`,
 		`(subpath "/Users/dev/.hermes/plugins/golem")`,
+		`(subpath "/Users/dev/.copilot/hooks")`,
+		`(literal "/Users/dev/.gemini/config/hooks.json")`,
 		`(literal "/Users/dev/.hermes/config.yaml")`,
 		`(literal "/Users/dev/.openclaw/openclaw.json")`,
 	} {

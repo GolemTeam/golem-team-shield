@@ -226,11 +226,12 @@ func TestStatusSaysWhereCommandsWriteAndWhatTheyReach(t *testing.T) {
 		cfg  shield.Config
 		want []string
 	}{
-		{"darwin", shield.DefaultConfig(), []string{"writes       anywhere but the protected files", "network      open"}},
+		{"darwin", shield.DefaultConfig(), []string{"writes       the project, temp and tool caches", "network      open"}},
+		{"darwin", shield.Config{}, []string{"writes       anywhere but the protected files"}},
 		{"darwin", shield.Config{Writes: shield.WritesWorkspace, AllowWrite: []string{"~/go/bin"}, Network: shield.NetworkAllowlist, AllowedHosts: []string{"github.com", "*.npmjs.org"}},
 			[]string{"the project, temp and tool caches, and ~/go/bin", "allowed hosts only, through a proxy: github.com, *.npmjs.org"}},
 		{"linux", shield.Config{Network: shield.NetworkAllowlist}, []string{"none yet", "Landlock's port rule"}},
-		{"windows", shield.Config{Writes: shield.WritesWorkspace, Network: shield.NetworkAllowlist}, []string{"Windows can't hold it yet", "binds only those that use it"}},
+		{"windows", shield.Config{Writes: shield.WritesWorkspace, Network: shield.NetworkAllowlist}, []string{"the project, temp and tool caches", "binds only those that use it"}},
 		{"darwin", shield.Config{Lockdown: true, Network: shield.NetworkAllowlist}, []string{"network      none (lockdown)"}},
 	}
 	for _, c := range cases {

@@ -398,3 +398,55 @@ func TestAllowlistedNetworkReachesOnlyTheProxy(t *testing.T) {
 		}
 	}
 }
+
+func TestAConfinedNetworkHandsNothingToAnotherApp(t *testing.T) {
+	f := newFakeHome(t)
+	c := f.context()
+	c.ProxyPort = 1
+	script := "osascript -e 'return 1'"
+	if !jailed(t, Policy{Enforce: true, State: Clean, Grants: AllGrants()}, c, script) {
+		t.Error("osascript doesn't run with the network open")
+	}
+	for _, p := range []Policy{
+		{Enforce: true, State: Clean, Grants: AllGrants(), Network: NetworkAllowlist},
+		{Enforce: true, State: Tainted},
+	} {
+		if jailed(t, p, c, script) {
+			t.Errorf("%s/%s: osascript ran", p.State, p.Network)
+		}
+		if !jailed(t, p, c, "git --version && /usr/bin/xcrun --find clang") {
+			t.Errorf("%s/%s: ordinary tools broke", p.State, p.Network)
+		}
+	}
+}
+
+func TestLocalhostInTheListOpensLoopback(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			conn.Close()
+		}
+	}()
+	f := newFakeHome(t)
+	c := f.context()
+	c.ProxyPort = 1
+	script := "nc -z -G 2 127.0.0.1 " + itoa(ln.Addr().(*net.TCPAddr).Port)
+	if jailed(t, Policy{Enforce: true, State: Clean, Grants: AllGrants(), Network: NetworkAllowlist, AllowedHosts: []string{"github.com"}}, c, script) {
+		t.Error("loopback was reachable without localhost in the list")
+	}
+	local := Policy{Enforce: true, State: Clean, Grants: AllGrants(), Network: NetworkAllowlist, AllowedHosts: []string{"localhost"}}
+	if !jailed(t, local, c, script) {
+		t.Error("localhost in the list didn't open loopback")
+	}
+	if jailed(t, local, c, "nc -z -G 2 1.1.1.1 443") {
+		t.Error("localhost in the list opened the internet")
+	}
+}

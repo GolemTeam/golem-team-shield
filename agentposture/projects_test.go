@@ -26,7 +26,7 @@ func TestARepoCanTurnPromptsOffForCursorGeminiAndCodex(t *testing.T) {
 
 	got := postureByKey(Scan(env))
 	if it := got[postureKey{"cursor", "run_everything", "project"}]; it.Severity != Dangerous ||
-		it.Location != filepath.Join(repo, ".cursor", "cli.json") {
+		it.Location != filepath.ToSlash(filepath.Join(repo, ".cursor", "cli.json")) {
 		t.Errorf("cursor project = %v", it)
 	}
 	if got[postureKey{"gemini-cli", "shell_allowed", "project"}].Severity != Suspicious {

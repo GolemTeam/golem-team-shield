@@ -83,6 +83,10 @@ var quoteRepl = strings.NewReplacer(`'`, `'\''`, `\`, `'\\'`)
 // HookShells are the names the shim answers to in HookShimDir.
 var HookShells = []string{"bash", "zsh"}
 
+// WindowsHookShells are its names there on Windows, where the agents run
+// PowerShell: PowerShell 7 and the 5.1 every Windows has.
+var WindowsHookShells = []string{"pwsh.exe", "powershell.exe"}
+
 // LinkShim points link at target (a name beside it), replacing whatever was
 // there unless it already does.
 func LinkShim(link, target string) error {

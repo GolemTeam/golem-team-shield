@@ -86,7 +86,7 @@ func TestAnMDMProfileThatRefusesBypassIsSeen(t *testing.T) {
 		t.Errorf("the MDM profile refuses bypass: %v", it)
 	}
 	got := postureByKey(items)
-	if it := got[postureKey{"claude-code", "bypass_default", "managed"}]; it.Location != prefs {
+	if it := got[postureKey{"claude-code", "bypass_default", "managed"}]; it.Location != filepath.ToSlash(prefs) {
 		t.Errorf("the profile's own defaultMode is reported where it is: %v", it)
 	}
 	if !has(got, postureKey{"claude-code", "shell_allowed", "managed"}) {

@@ -23,7 +23,7 @@ import (
 
 // RulesVersion names the rule pack. Findings carry it, so a stored finding
 // says which rules it was made against, and a new version re-scans.
-const RulesVersion = "2026.11.2"
+const RulesVersion = "2026.11.3"
 
 const (
 	SeverityLow    = "low"
@@ -87,9 +87,12 @@ type textRule struct {
 	// safeguard, and "send credentials" with nowhere to send them is a sentence
 	// about them.
 	directed bool
-	// advice skips "never tell the user to run it": what to say to the user,
-	// not what to keep from them. "Don't tell the user how" is concealment.
+	// advice skips "never tell the user to run it" and "don't tell the user
+	// how to fix it": what to say to the user, not what to keep from them.
+	// "Don't tell the user how you got it" is concealment.
 	advice bool
+	// quotable skips a match a clause reports someone else saying.
+	quotable bool
 }
 
 var (
@@ -119,7 +122,16 @@ func clause(text string, start, end int) (before, after string) {
 
 func adviceFollows(rest string) bool {
 	next := strings.Fields(strings.ToLower(rest[:min(len(rest), 40)]))
-	return len(next) > 0 && next[0] == "to"
+	return len(next) > 0 && (next[0] == "to" || next[0] == "how" && len(next) > 1 && next[1] == "to")
+}
+
+// reportedRE is a clause that quotes what something else says ("if a page says
+// ignore previous instructions, stop"): a warning about an injection, not one.
+var reportedRE = regexp.MustCompile(`(?i)\b(says?|said|asks?|tells? you|contains?|reads?|such as|like|e\.g\.)\s*[:"'“‘]?\s*$`)
+
+func reported(text string, start int) bool {
+	before, _ := clause(text, start, start)
+	return reportedRE.MatchString(before)
 }
 
 func directedMatch(text string, start, end int) bool {
@@ -149,7 +161,8 @@ var textRules = []textRule{
 		Severity: SeverityHigh, Confidence: ConfidenceHigh, Attack: []string{"AML.T0051.001"}, Source: "skillspector/P2, cisco/yara/prompt_injection"}},
 	{Rule: Rule{ID: "gd-override", Title: "Tells the agent to set aside its instructions", Category: "prompt_injection",
 		Severity: SeverityHigh, Confidence: ConfidenceMedium, Attack: []string{"AML.T0051.001"}, Source: "skillspector/P1"},
-		re: regexp.MustCompile(`(?i)\b(ignore|disregard|forget|override)\b[^.\n]{0,40}\b(previous|prior|above|earlier|all|any|other|system)\b[^.\n]{0,20}\b(instructions?|rules|prompts?|guidelines|directions)\b`)},
+		re:       regexp.MustCompile(`(?i)\b(ignore|disregard|forget|override)\b[^.\n]{0,40}\b(previous|prior|above|earlier|all|any|other|system)\b[^.\n]{0,20}\b(instructions?|rules|prompts?|guidelines|directions)\b`),
+		quotable: true},
 	{Rule: Rule{ID: "gd-conceal", Title: "Tells the agent to keep something from the user", Category: "concealment",
 		Severity: SeverityHigh, Confidence: ConfidenceMedium, Attack: []string{"AML.T0051.001"}, Source: "invariant tool poisoning, cisco/yara/coercive_injection"},
 		re:     regexp.MustCompile(`(?i)\b(do not|don't|never|without)\s+([\w'-]+\s+){0,3}?(tell|telling|inform|informing|mention|mentioning|reveal|revealing|notify|notifying|alert|alerting)\b[^.;\n]{0,60}\b(the )?(user|human|operator)\b`),
@@ -354,8 +367,11 @@ func (sc *scanner) add(r Rule, p definition.Part, field, value string, start, en
 	if !agentFacing(p) && isProse(p.Name) {
 		confidence = lower(confidence)
 	}
+	// An official installer piped to a shell is how install docs are written:
+	// still running fetched code, so still a finding, but two steps less likely
+	// to be an attack, which keeps it from alerting.
 	if r.Category == "runs_fetched_code" && end <= len(value) && knownInstaller(value[start:end]) {
-		confidence = lower(confidence)
+		confidence = lower(lower(confidence))
 	}
 	sc.out = append(sc.out, Finding{
 		Rule: r.ID, Severity: r.Severity, Confidence: confidence, Category: r.Category, Attack: r.Attack,
@@ -419,7 +435,8 @@ func (sc *scanner) text(p definition.Part, t text, server bool) {
 			continue
 		}
 		for _, m := range r.re.FindAllStringIndex(t.value, maxPerRulePart) {
-			if r.directed && !directedMatch(t.value, m[0], m[1]) || r.advice && adviceFollows(t.value[m[1]:]) {
+			if r.directed && !directedMatch(t.value, m[0], m[1]) || r.advice && adviceFollows(t.value[m[1]:]) ||
+				r.quotable && reported(t.value, m[0]) {
 				continue
 			}
 			sc.add(r.Rule, p, t.field, t.value, m[0], m[1])

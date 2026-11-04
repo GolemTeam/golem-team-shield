@@ -25,6 +25,19 @@ func TestAnEmptyConfigIsTheBaseline(t *testing.T) {
 	}
 }
 
+func TestANewInstallKeepsWritesToTheProjectAndAnOldFileDoesNot(t *testing.T) {
+	if !DefaultConfig().Policy().ConfinedWrites() {
+		t.Error("a new install writes anywhere")
+	}
+	path := filepath.Join(t.TempDir(), "shield.json")
+	if err := os.WriteFile(path, []byte(`{"enforce": true, "cloud_credentials": true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if c, _, err := LoadConfig(path); err != nil || c.Policy().ConfinedWrites() {
+		t.Errorf("a file from before writes existed is now confined: %+v %v", c, err)
+	}
+}
+
 func TestStrictTakesTheCloudCredentialsAwayAndKeepsWritesToTheWorkspace(t *testing.T) {
 	p := StrictConfig().Policy()
 	if g := p.Grants; g.Cloud || !g.Agent || !g.Docker {

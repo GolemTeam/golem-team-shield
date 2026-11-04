@@ -2,6 +2,7 @@ package shield
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -117,5 +118,36 @@ func TestWindowsDeniesAppStoresWithoutFailingCommands(t *testing.T) {
 	}
 	if _, ok := winDeny(j, h("AppData/Roaming/Signal")); ok {
 		t.Error("an app that isn't installed got an entry")
+	}
+}
+
+func TestWindowsWorkspaceWritesRunAtLowIntegrity(t *testing.T) {
+	tr := newLLTree(t)
+	plantFile(t, filepath.Join(tr.home, "AppData", "Local", "npm-cache", "x"))
+	open, err := CompileWindows(Policy{Enforce: true, State: Clean, Grants: AllGrants()}, tr.context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if open.LowIntegrity || len(open.LowRoots) != 0 {
+		t.Errorf("anywhere ran at low integrity: %+v", open)
+	}
+	j, err := CompileWindows(Policy{Enforce: true, State: Clean, Grants: AllGrants(), Writes: WritesWorkspace}, tr.context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !j.LowIntegrity {
+		t.Fatal("workspace writes didn't lower the shell's integrity")
+	}
+	roots := strings.Join(j.LowRoots, "|")
+	for _, want := range []string{tr.ws, tr.tmp, filepath.Join(tr.home, "AppData", "Local", "npm-cache"), filepath.Join(tr.home, ".cache")} {
+		if !strings.Contains("|"+roots+"|", "|"+want+"|") {
+			t.Errorf("low roots %v lack %s", j.LowRoots, want)
+		}
+	}
+	if strings.Contains(roots, filepath.Join(tr.home, ".npm")) {
+		t.Error("a cache that isn't there was labelled")
+	}
+	if j.Hash() == open.Hash() {
+		t.Error("the policy hash doesn't tell the two apart")
 	}
 }

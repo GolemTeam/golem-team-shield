@@ -14,7 +14,9 @@ import (
 )
 
 // The hooks area reads every hook command an agent runs: Claude Code's (user,
-// managed and each project's settings), Gemini CLI's, and Cursor's hooks.json.
+// managed and each project's settings), Gemini CLI's, Cursor's, Codex's,
+// Devin's (Devin Desktop is what Windsurf became, and its Cascade hooks are
+// Devin's) and Antigravity's.
 // Each file's commands go through defscan's hook rules as one hooks.json, the
 // shape a plugin ships, so a settings hook and a plugin hook are judged alike;
 // then the file a command runs is checked on disk.
@@ -33,20 +35,50 @@ func (s *scan) hookFiles() []hookFile {
 		{"claude-code", "managed", filepath.Join(s.env.ManagedDir, "managed-settings.json"), "claude", ""},
 		{"gemini-cli", "user", filepath.Join(home, ".gemini", "settings.json"), "claude", ""},
 		{"cursor", "user", filepath.Join(home, ".cursor", "hooks.json"), "cursor", ""},
+		{"antigravity", "user", filepath.Join(home, ".gemini", "config", "hooks.json"), "sets", ""},
+	}
+	for _, dir := range s.env.CodexHomes {
+		out = append(out, hookFile{"codex", "user", filepath.Join(dir, "hooks.json"), "claude", ""})
+	}
+	if dir := s.devinConfigDir(); dir != "" {
+		out = append(out, hookFile{"devin", "user", filepath.Join(dir, "config.json"), "claude", ""})
 	}
 	for _, p := range s.projectRoots() {
 		out = append(out,
 			hookFile{"claude-code", "project", filepath.Join(p, ".claude", "settings.json"), "claude", p},
 			hookFile{"claude-code", "local", filepath.Join(p, ".claude", "settings.local.json"), "claude", p},
 			hookFile{"gemini-cli", "project", filepath.Join(p, ".gemini", "settings.json"), "claude", p},
-			hookFile{"cursor", "project", filepath.Join(p, ".cursor", "hooks.json"), "cursor", p})
+			hookFile{"cursor", "project", filepath.Join(p, ".cursor", "hooks.json"), "cursor", p},
+			hookFile{"devin", "project", filepath.Join(p, ".devin", "config.json"), "claude", p},
+			hookFile{"devin", "local", filepath.Join(p, ".devin", "config.local.json"), "claude", p},
+			hookFile{"devin", "project", filepath.Join(p, ".devin", "hooks.v1.json"), "bare", p})
 	}
 	return out
 }
 
+// readHookCommands reads a hooks file in the shape its agent writes: Claude
+// Code's "hooks" object of events (Gemini CLI, Codex and Devin share it), a
+// file that is that object itself (Devin's hooks.v1.json), Cursor's flat
+// entries, or Antigravity's named sets of events.
 func (s *scan) readHookCommands(path, format string) []hookCommand {
 	m := s.readSettings(path)
+	switch format {
+	case "bare":
+		return hookCommandsOf(m, "claude")
+	case "sets":
+		var out []hookCommand
+		for _, set := range sortedAnyKeys(m) {
+			if events, ok := m[set].(map[string]any); ok {
+				out = append(out, hookCommandsOf(events, "claude")...)
+			}
+		}
+		return out
+	}
 	hooks, _ := m["hooks"].(map[string]any)
+	return hookCommandsOf(hooks, format)
+}
+
+func hookCommandsOf(hooks map[string]any, format string) []hookCommand {
 	var out []hookCommand
 	for _, event := range sortedAnyKeys(hooks) {
 		entries, _ := hooks[event].([]any)

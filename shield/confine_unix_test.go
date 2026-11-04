@@ -175,3 +175,38 @@ func TestAWorkingDirOutsideARepositoryIsTheProjectForConfinedWritesOnly(t *testi
 		t.Error("a working directory holding home was accepted")
 	}
 }
+
+func TestSeatbeltHandsNothingOffWhenTheNetworkIsConfined(t *testing.T) {
+	c := testContext()
+	c.ProxyPort = 41234
+	for _, p := range []Policy{
+		{Enforce: true, State: Clean, Network: NetworkAllowlist},
+		{Enforce: true, State: Tainted},
+	} {
+		out := mustCompile(t, p, c)
+		for _, want := range []string{`(global-name-regex #"^com\.apple\.coreservices\.")`, `(literal "/usr/bin/osascript")`, "(deny process-exec"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("%s/%s: profile lacks %s", p.State, p.Network, want)
+			}
+		}
+	}
+	if out := mustCompile(t, Policy{Enforce: true, State: Clean, Writes: WritesWorkspace}, c); strings.Contains(out, "osascript") || strings.Contains(out, "coreservices") {
+		t.Error("an open network lost open and osascript")
+	}
+}
+
+func TestSeatbeltLetsLoopbackOutOnlyWhenLocalhostIsAllowed(t *testing.T) {
+	c := testContext()
+	c.ProxyPort = 41234
+	out := mustCompile(t, Policy{Enforce: true, State: Clean, Network: NetworkAllowlist, AllowedHosts: []string{"github.com"}}, c)
+	if strings.Contains(out, `localhost:*`) {
+		t.Error("loopback is open without localhost in the list")
+	}
+	out = mustCompile(t, Policy{Enforce: true, State: Clean, Network: NetworkAllowlist, AllowedHosts: []string{"github.com", "localhost"}}, c)
+	if !strings.Contains(ruleBlock(out, "(allow network-outbound"), `(remote ip "localhost:*")`) {
+		t.Errorf("localhost in the list didn't open loopback:\n%s", out)
+	}
+	if strings.Contains(mustCompile(t, Policy{Enforce: true, State: Tainted, AllowedHosts: []string{"localhost"}}, c), `localhost:*`) {
+		t.Error("taint must take loopback too")
+	}
+}

@@ -35,6 +35,15 @@ func TestSessionFromEnv(t *testing.T) {
 			}
 		})
 	}
+	if err := shield.NoteHookSession(home, "copilot", cwd, "hook-id"); err != nil {
+		t.Fatal(err)
+	}
+	if s, a := sessionFromEnv(func(k string) string { return map[string]string{"COPILOT_AGENT_SESSION_ID": "env-id"}[k] }, home, cwd, now); s != "hook-id" || a != "copilot" {
+		t.Fatalf("Copilot's hook note should name the session: (%q, %q)", s, a)
+	}
+	if s, _ := sessionFromEnv(func(k string) string { return map[string]string{"COPILOT_AGENT_SESSION_ID": "env-id"}[k] }, home, "/elsewhere", now); s != "env-id" {
+		t.Fatalf("with no note Copilot's own variable should: %q", s)
+	}
 	if s, _ := sessionFromEnv(func(k string) string { return map[string]string{"GEMINI_CLI": "1"}[k] }, home, "/elsewhere", now); s != "" {
 		t.Fatalf("a note for one directory named the session in another: %q", s)
 	}

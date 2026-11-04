@@ -204,3 +204,31 @@ func TestProxyCloseEndsOpenTunnels(t *testing.T) {
 		t.Errorf("tunnel still open after Close: %v", err)
 	}
 }
+
+func TestProxyReachesLoopbackOnlyWhenTheListNamesIt(t *testing.T) {
+	resolve := func(_ context.Context, host string) ([]netip.Addr, error) {
+		return map[string][]netip.Addr{
+			"localhost":   {netip.MustParseAddr("127.0.0.1"), netip.MustParseAddr("::1")},
+			"rebind.test": {netip.MustParseAddr("127.0.0.1")},
+		}[host], nil
+	}
+	cases := []struct {
+		hosts  []string
+		target string
+		ok     bool
+	}{
+		{[]string{"localhost"}, "localhost:3000", true},
+		{[]string{"127.0.0.1"}, "127.0.0.1:5432", true},
+		{[]string{"localhost"}, "127.0.0.1:5432", false},
+		{[]string{"*"}, "localhost:3000", false},
+		{[]string{"localhost", "rebind.test"}, "rebind.test:80", false},
+		{[]string{"localhost", "169.254.169.254"}, "169.254.169.254:80", false},
+	}
+	for _, c := range cases {
+		p := NewProxy(c.hosts)
+		p.resolve = resolve
+		if _, rec := p.target(context.Background(), c.target, 443); rec.Allowed != c.ok {
+			t.Errorf("%v → %s: %+v", c.hosts, c.target, rec)
+		}
+	}
+}

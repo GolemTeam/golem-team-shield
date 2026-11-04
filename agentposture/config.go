@@ -11,6 +11,9 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/GolemTeam/golem-team-shield/internal/definition"
+	"github.com/GolemTeam/golem-team-shield/internal/defscan"
 )
 
 // The config scan reads what this machine's AI agents are configured to load
@@ -50,6 +53,7 @@ const (
 	mcpFormatVSCode   = "servers"
 	mcpFormatCodex    = "codex"
 	mcpFormatOpenClaw = "openclaw"
+	mcpFormatHermes   = "hermes"
 )
 
 type mcpFile struct {
@@ -108,13 +112,7 @@ func (s *configScanner) add(f configFile, check, sev, subject, detail string) {
 	})
 }
 
-func (s *configScanner) display(path string) string {
-	sep := string(filepath.Separator)
-	if s.env.Home != "" && strings.HasPrefix(path, s.env.Home+sep) {
-		return "~" + sep + strings.TrimPrefix(path, s.env.Home+sep)
-	}
-	return path
-}
+func (s *configScanner) display(path string) string { return displayPath(s.env.Home, path) }
 
 // read is readCapped that remembers a file which exists but could not be read.
 func (s *configScanner) read(path, area string) ([]byte, os.FileInfo, bool) {
@@ -281,7 +279,9 @@ func (s *configScanner) mcpConfigPaths() []mcpFile {
 	for _, dir := range s.env.CodexHomes {
 		paths = append(paths, user("codex", filepath.Join(dir, "config.toml"), mcpFormatCodex))
 	}
-	return append(paths, user("openclaw", filepath.Join(home, ".openclaw", "openclaw.json"), mcpFormatOpenClaw))
+	return append(paths,
+		user("openclaw", filepath.Join(home, ".openclaw", "openclaw.json"), mcpFormatOpenClaw),
+		user("hermes", filepath.Join(home, ".hermes", "config.yaml"), mcpFormatHermes))
 }
 
 func (s *configScanner) scanMCPFile(f mcpFile) {
@@ -291,6 +291,21 @@ func (s *configScanner) scanMCPFile(f mcpFile) {
 	}
 	if f.format == mcpFormatCodex {
 		s.scanServers(f.configFile, info, ParseCodexMCPServers(string(b)))
+		return
+	}
+	if f.format == mcpFormatHermes {
+		doc, err := parseYAMLSubset(b)
+		m, _ := doc.(map[string]any)
+		if err != nil || m == nil {
+			s.out.Unreadable[s.display(f.path)] = true
+			return
+		}
+		raw, err := json.Marshal(m["mcp_servers"])
+		if err != nil {
+			s.out.Unreadable[s.display(f.path)] = true
+			return
+		}
+		s.scanServers(f.configFile, info, ParseMCPServers(raw))
 		return
 	}
 	var doc struct {
@@ -653,90 +668,38 @@ func (s *configScanner) instructionFiles() []configFile {
 	return out
 }
 
-var (
-	concealRe  = regexp.MustCompile(`(?i)\b(?:do\s+not|don'?t|never)\s+(?:tell|inform|mention\s+(?:this|it)\s+to)\s+the\s+user\b|\bwithout\s+(?:telling|informing)\s+the\s+user\b|\bhide\s+(?:this|it)\s+from\s+the\s+user\b`)
-	overrideRe = regexp.MustCompile(`(?i)\bignore\s+(?:all\s+|any\s+)?(?:previous|prior|above|earlier|other)\s+instructions\b`)
-	credFileRe = regexp.MustCompile(`(?i)\.ssh/id_(?:rsa|ed25519|ecdsa|dsa)|\.aws/credentials|\.config/gcloud/|\.netrc\b|\.docker/config\.json`)
-)
-
-// invisibleRune reports characters that render as nothing or reorder text (bidi
-// controls, zero-width characters, Unicode tags): the usual carriers of
-// instructions that a person reviewing the file cannot see.
-func invisibleRune(r rune) bool {
-	switch {
-	case r >= 0x202A && r <= 0x202E, r >= 0x2066 && r <= 0x2069:
-		return true
-	case r == 0x200B, r == 0x200C, r == 0x200D, r == 0x2060, r == 0xFEFF:
-		return true
-	case r >= 0xE0000 && r <= 0xE007F:
-		return true
-	}
-	return false
-}
-
+// scanInstructions runs defscan, the rules the inventory and golem-check run,
+// over one instruction file, so an alert names the same gd-* rule as both.
+// The detail is the rule's title and nothing from the file: it is the file's
+// own content, and a finding's detail reaches metadata and webhook notes. No
+// line either: the detail is part of the alert's fingerprint, and an edit
+// elsewhere in the file must not make a reported finding new again.
 func (s *configScanner) scanInstructions(f configFile) {
 	b, _, ok := s.read(f.path, AreaInstructions)
 	if !ok || !utf8.Valid(b) {
 		return
 	}
-	subject := filepath.Base(f.path)
-	if subject == "SKILL.md" {
-		subject = filepath.Base(filepath.Dir(f.path))
+	base := filepath.Base(f.path)
+	subject, assetType, part := base, "instructions", base
+	switch parent := filepath.Base(filepath.Dir(f.path)); {
+	case base == "SKILL.md":
+		subject, assetType = parent, "skill"
+	case parent == "commands" || parent == "agents" || parent == "rules":
+		part = parent + "/" + base
 	}
-	text := strings.TrimPrefix(string(b), "\uFEFF")
-	// Distinct code points and no line numbers: the detail is part of the
-	// finding's fingerprint, and an edit elsewhere in the file must not make an
-	// already-reported finding new again.
-	seenRune := map[rune]bool{}
-	var hidden []string
-	for _, r := range text {
-		if invisibleRune(r) && !seenRune[r] && len(hidden) < 5 {
-			seenRune[r] = true
-			hidden = append(hidden, fmt.Sprintf("U+%04X", r))
-		}
-	}
-	if len(hidden) > 0 {
-		sort.Strings(hidden)
-		s.add(f, "instructions_hidden_unicode", Dangerous, subject,
-			"contains characters a reader cannot see: "+strings.Join(hidden, ", "))
-	}
-	for _, c := range []struct {
-		check, severity string
-		re              *regexp.Regexp
-		detail          string
-	}{
-		// Info, not alerts: ordinary project docs say these things for honest
-		// reasons (install steps, where credentials come from, how to resist a
-		// prompt injection). Recorded so a reviewer can look; only concealment,
-		// narrowed to telling, and hidden characters raise a flag.
-		{"instructions_conceal", Suspicious, concealRe, "tells the agent to keep something from the user"},
-		{"instructions_override", Info, overrideRe, "tells the agent to ignore its other instructions"},
-		{"instructions_pipe_to_shell", Info, pipeToShellRe, "mentions piping a download into a shell"},
-		{"instructions_credential_files", Info, credFileRe, "mentions credential files"},
-	} {
-		// The matched text is not quoted: it is the file's own content, and a
-		// finding's detail reaches metadata and webhook notes unredacted.
-		if matchesInstruction(c.check, c.re, text) {
-			s.add(f, c.check, c.severity, subject, c.detail)
-		}
-	}
-}
-
-// matchesInstruction is re.MatchString, except that "never tell the user to
-// run it" and "don't tell the user how to fix it" are about what to say, not
-// what to keep back, and do not count as concealment.
-func matchesInstruction(check string, re *regexp.Regexp, text string) bool {
-	if check != "instructions_conceal" {
-		return re.MatchString(text)
-	}
-	for _, loc := range re.FindAllStringIndex(text, -1) {
-		next := strings.Fields(strings.ToLower(text[loc[1]:min(loc[1]+40, len(text))]))
-		if len(next) > 0 && (next[0] == "to" || next[0] == "how") {
+	seen := map[string]bool{}
+	for _, fd := range defscan.Scan(definition.Build(assetType, subject, definition.SourceConfigScan,
+		[]definition.Part{definition.Text(definition.KindFile, part, b)})) {
+		if seen[fd.Rule] {
 			continue
 		}
-		return true
+		seen[fd.Rule] = true
+		title := ruleTitles[fd.Rule]
+		if title == "" {
+			title = fd.Rule
+		}
+		s.add(f, fd.Rule, ruleSeverity(fd.Severity, fd.Confidence), subject, strings.ToLower(title[:1])+title[1:])
 	}
-	return false
 }
 
 // Items is the scan as report items. A hook's detail already names its event;
@@ -752,7 +715,7 @@ func (c ConfigScan) Items() []Item {
 			area = AreaMCPServers
 		case strings.HasPrefix(f.Check, "hook_"):
 			area, detail = AreaHooks, f.Detail
-		case strings.HasPrefix(f.Check, "instructions_"):
+		case strings.HasPrefix(f.Check, "gd-"):
 			area = AreaInstructions
 		}
 		out = append(out, Item{

@@ -31,6 +31,13 @@ var clientMarkers = []struct{ env, value, agent string }{
 // sets none, what its hook noted for this directory. A command it can tie to
 // no session gets the machine's policy.
 func sessionFromEnv(getenv func(string) string, home, cwd string, now time.Time) (sessionID, agentID string) {
+	// Copilot CLI's hook names the session the Golem agent knows; whether its
+	// commands' variable is the same id is not established, so the note wins.
+	if getenv("COPILOT_AGENT_SESSION_ID") != "" || getenv("COPILOT_CLI") == "1" {
+		if id := shield.HookSession(home, "copilot", cwd, now); id != "" {
+			return id, "copilot"
+		}
+	}
 	for _, v := range clientSessionVars {
 		if id := getenv(v.env); sessionIDRE.MatchString(id) {
 			return id, v.agent

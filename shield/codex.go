@@ -195,7 +195,7 @@ func codexCoverage(env CoverageEnv) (AgentCoverage, bool) {
 	hooksPath := filepath.Join(dir, "hooks.json")
 	c := AgentCoverage{Client: "codex", Label: "Codex", Coverage: NotJailed, Location: tilde(env.Home, hooksPath)}
 	if env.GOOS == "windows" {
-		c.Detail = "Codex runs PowerShell on Windows, which the Golem jail doesn't cover yet"
+		c.Detail = "On Windows Golem doesn't rewrite Codex's PowerShell commands: Codex's own dangerous-command checks would no longer see them"
 		return c, true
 	}
 	group := -1

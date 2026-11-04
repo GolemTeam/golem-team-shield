@@ -15,6 +15,11 @@ func withSettings(t *testing.T, body string) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", "")
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("GOLEM_INSTALL_DIR", "")
+	saved := systemBinDirs
+	systemBinDirs = nil
+	t.Cleanup(func() { systemBinDirs = saved })
 	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -156,5 +161,35 @@ func TestBadFlagValuesAreUsageErrors(t *testing.T) {
 		if code := run(args, &out, &errs); code != 2 {
 			t.Errorf("%v: exit %d, want 2", args, code)
 		}
+	}
+}
+
+func TestTheInstallLineIsLeftOutWhereTheAgentIsInstalled(t *testing.T) {
+	withSettings(t, `{"permissions":{"defaultMode":"bypassPermissions"}}`)
+	var out, errs bytes.Buffer
+	if code := run(nil, &out, &errs); code != 0 || !strings.Contains(out.String(), installCommand(runtime.GOOS)) {
+		t.Fatalf("no agent, no install line (exit %d):\n%s", code, out.String())
+	}
+
+	name := "golem"
+	if runtime.GOOS == "windows" {
+		name = "golem.exe"
+	}
+	bin := filepath.Join(os.Getenv("HOME"), ".local", "bin", name)
+	if err := os.MkdirAll(filepath.Dir(bin), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" {
+		t.Setenv("PATH", filepath.Dir(bin))
+	}
+	out.Reset()
+	if code := run(nil, &out, &errs); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if got := out.String(); strings.Contains(got, installCommand(runtime.GOOS)) || !strings.Contains(got, "The Golem agent is installed here") {
+		t.Errorf("an installed agent is offered again:\n%s", got)
 	}
 }

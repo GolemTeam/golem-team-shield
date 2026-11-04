@@ -170,7 +170,7 @@ func (s *shim) context(tmp, tag string) shield.Context {
 // still write: TMPDIR as the agent set it, and /tmp.
 func (s *shim) systemTmp() []string {
 	var out []string
-	for _, d := range []string{s.getenv("TMPDIR"), "/tmp"} {
+	for _, d := range []string{s.getenv("TMPDIR"), s.getenv("TEMP"), s.getenv("TMP"), "/tmp"} {
 		if d == "" || !filepath.IsAbs(d) {
 			continue
 		}

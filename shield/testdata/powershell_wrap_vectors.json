@@ -1,0 +1,112 @@
+[
+  {
+    "shim": "C:\\Users\\dev\\.golem\\bin\\hook\\pwsh.exe",
+    "command": "git status",
+    "wrapped": "$LASTEXITCODE = 126; \u0026 'C:\\Users\\dev\\.golem\\bin\\hook\\pwsh.exe' -NoProfile -NonInteractive -EncodedCommand ZwBpAHQAIABzAHQAYQB0AHUAcwA=; exit $LASTEXITCODE \u003c# git status #\u003e"
+  },
+  {
+    "shim": "C:\\Users\\dev\\.golem\\bin\\hook\\pwsh.exe",
+    "command": "Write-Output 'it''s \"quoted\" é ✓ $HOME'",
+    "wrapped": "$LASTEXITCODE = 126; \u0026 'C:\\Users\\dev\\.golem\\bin\\hook\\pwsh.exe' -NoProfile -NonInteractive -EncodedCommand VwByAGkAdABlAC0ATwB1AHQAcAB1AHQAIAAnAGkAdAAnACcAcwAgACIAcQB1AG8AdABlAGQAIgAgAOkAIAATJyAAJABIAE8ATQBFACcA; exit $LASTEXITCODE \u003c# Write-Output 'it''s \"quoted\" é ✓ $HOME' #\u003e"
+  },
+  {
+    "shim": "C:\\Users\\dev\\.golem\\bin\\hook\\pwsh.exe",
+    "command": "Get-ChildItem | ForEach-Object {\n  $_.Name\n}",
+    "wrapped": "$LASTEXITCODE = 126; \u0026 'C:\\Users\\dev\\.golem\\bin\\hook\\pwsh.exe' -NoProfile -NonInteractive -EncodedCommand RwBlAHQALQBDAGgAaQBsAGQASQB0AGUAbQAgAHwAIABGAG8AcgBFAGEAYwBoAC0ATwBiAGoAZQBjAHQAIAB7AAoAIAAgACQAXwAuAE4AYQBtAGUACgB9AA==; exit $LASTEXITCODE \u003c# Get-ChildItem | ForEach-Object {\n  $_.Name\n} #\u003e"
+  },
+  {
+    "shim": "C:\\Users\\dev\\.golem\\bin\\hook\\pwsh.exe",
+    "command": "echo \"a\" ; echo 'b' # trailing",
+    "wrapped": "$LASTEXITCODE = 126; \u0026 'C:\\Users\\dev\\.golem\\bin\\hook\\pwsh.exe' -NoProfile -NonInteractive -EncodedCommand ZQBjAGgAbwAgACIAYQAiACAAOwAgAGUAYwBoAG8AIAAnAGIAJwAgACMAIAB0AHIAYQBpAGwAaQBuAGcA; exit $LASTEXITCODE \u003c# echo \"a\" ; echo 'b' # trailing #\u003e"
+  },
+  {
+    "shim": "C:\\Users\\dev\\.golem\\bin\\hook\\pwsh.exe",
+    "command": "echo done #\u003e Remove-Item -Recurse C:\\ \u003c#",
+    "wrapped": "$LASTEXITCODE = 126; \u0026 'C:\\Users\\dev\\.golem\\bin\\hook\\pwsh.exe' -NoProfile -NonInteractive -EncodedCommand ZQBjAGgAbwAgAGQAbwBuAGUAIAAjAD4AIABSAGUAbQBvAHYAZQAtAEkAdABlAG0AIAAtAFIAZQBjAHUAcgBzAGUAIABDADoAXAAgADwAIwA=; exit $LASTEXITCODE \u003c# echo done # \u003e Remove-Item -Recurse C:\\ \u003c# #\u003e"
+  },
+  {
+    "shim": "C:\\Users\\dev\\.golem\\bin\\hook\\pwsh.exe",
+    "command": "‘curly’ ‚low‛",
+    "wrapped": "$LASTEXITCODE = 126; \u0026 'C:\\Users\\dev\\.golem\\bin\\hook\\pwsh.exe' -NoProfile -NonInteractive -EncodedCommand GCBjAHUAcgBsAHkAGSAgABogbABvAHcAGyA=; exit $LASTEXITCODE \u003c# ‘curly’ ‚low‛ #\u003e"
+  },
+  {
+    "shim": "C:\\Users\\dev\\.golem\\bin\\hook\\pwsh.exe",
+    "command": "",
+    "wrapped": null
+  },
+  {
+    "shim": "C:\\Users\\dev\\.golem\\bin\\hook\\pwsh.exe",
+    "command": " ",
+    "wrapped": null
+  },
+  {
+    "shim": "C:\\Users\\dev\\.golem\\bin\\hook\\pwsh.exe",
+    "command": "a\u0000b",
+    "wrapped": null
+  },
+  {
+    "shim": "C:\\Users\\dev\\.golem\\bin\\hook\\pwsh.exe",
+    "command": "$LASTEXITCODE = 126; \u0026 'C:\\Users\\dev\\.golem\\bin\\hook\\pwsh.exe' -NoProfile -NonInteractive -EncodedCommand ZwBpAHQAIABzAHQAYQB0AHUAcwA=; exit $LASTEXITCODE \u003c# git status #\u003e",
+    "wrapped": "$LASTEXITCODE = 126; \u0026 'C:\\Users\\dev\\.golem\\bin\\hook\\pwsh.exe' -NoProfile -NonInteractive -EncodedCommand ZwBpAHQAIABzAHQAYQB0AHUAcwA=; exit $LASTEXITCODE \u003c# git status #\u003e"
+  },
+  {
+    "shim": "C:\\Users\\dev\\.golem\\bin\\hook\\pwsh.exe",
+    "command": "$LASTEXITCODE = 126; \u0026 'C:\\Users\\dev\\.golem\\bin\\hook\\pwsh.exe' -NoProfile -NonInteractive -EncodedCommand ZwBpAHQAIABzAHQAYQB0AHUAcwA=; exit $LASTEXITCODE \u003c# git status #\u003e; whoami",
+    "wrapped": "$LASTEXITCODE = 126; \u0026 'C:\\Users\\dev\\.golem\\bin\\hook\\pwsh.exe' -NoProfile -NonInteractive -EncodedCommand JABMAEEAUwBUAEUAWABJAFQAQwBPAEQARQAgAD0AIAAxADIANgA7ACAAJgAgACcAQwA6AFwAVQBzAGUAcgBzAFwAZABlAHYAXAAuAGcAbwBsAGUAbQBcAGIAaQBuAFwAaABvAG8AawBcAHAAdwBzAGgALgBlAHgAZQAnACAALQBOAG8AUAByAG8AZgBpAGwAZQAgAC0ATgBvAG4ASQBuAHQAZQByAGEAYwB0AGkAdgBlACAALQBFAG4AYwBvAGQAZQBkAEMAbwBtAG0AYQBuAGQAIABaAHcAQgBwAEEASABRAEEASQBBAEIAegBBAEgAUQBBAFkAUQBCADAAQQBIAFUAQQBjAHcAQQA9ADsAIABlAHgAaQB0ACAAJABMAEEAUwBUAEUAWABJAFQAQwBPAEQARQAgADwAIwAgAGcAaQB0ACAAcwB0AGEAdAB1AHMAIAAjAD4AOwAgAHcAaABvAGEAbQBpAA==; exit $LASTEXITCODE \u003c# $LASTEXITCODE = 126; \u0026 'C:\\Users\\dev\\.golem\\bin\\hook\\pwsh.exe' -NoProfile -NonInteractive -EncodedCommand ZwBpAHQAIABzAHQAYQB0AHUAcwA=; exit $LASTEXITCODE \u003c# git status # \u003e; whoami #\u003e"
+  },
+  {
+    "shim": "C:\\Users\\O'Brien Smith\\.golem\\bin\\hook\\pwsh.exe",
+    "command": "git status",
+    "wrapped": "$LASTEXITCODE = 126; \u0026 'C:\\Users\\O''Brien Smith\\.golem\\bin\\hook\\pwsh.exe' -NoProfile -NonInteractive -EncodedCommand ZwBpAHQAIABzAHQAYQB0AHUAcwA=; exit $LASTEXITCODE \u003c# git status #\u003e"
+  },
+  {
+    "shim": "C:\\Users\\O'Brien Smith\\.golem\\bin\\hook\\pwsh.exe",
+    "command": "Write-Output 'it''s \"quoted\" é ✓ $HOME'",
+    "wrapped": "$LASTEXITCODE = 126; \u0026 'C:\\Users\\O''Brien Smith\\.golem\\bin\\hook\\pwsh.exe' -NoProfile -NonInteractive -EncodedCommand VwByAGkAdABlAC0ATwB1AHQAcAB1AHQAIAAnAGkAdAAnACcAcwAgACIAcQB1AG8AdABlAGQAIgAgAOkAIAATJyAAJABIAE8ATQBFACcA; exit $LASTEXITCODE \u003c# Write-Output 'it''s \"quoted\" é ✓ $HOME' #\u003e"
+  },
+  {
+    "shim": "C:\\Users\\O'Brien Smith\\.golem\\bin\\hook\\pwsh.exe",
+    "command": "Get-ChildItem | ForEach-Object {\n  $_.Name\n}",
+    "wrapped": "$LASTEXITCODE = 126; \u0026 'C:\\Users\\O''Brien Smith\\.golem\\bin\\hook\\pwsh.exe' -NoProfile -NonInteractive -EncodedCommand RwBlAHQALQBDAGgAaQBsAGQASQB0AGUAbQAgAHwAIABGAG8AcgBFAGEAYwBoAC0ATwBiAGoAZQBjAHQAIAB7AAoAIAAgACQAXwAuAE4AYQBtAGUACgB9AA==; exit $LASTEXITCODE \u003c# Get-ChildItem | ForEach-Object {\n  $_.Name\n} #\u003e"
+  },
+  {
+    "shim": "C:\\Users\\O'Brien Smith\\.golem\\bin\\hook\\pwsh.exe",
+    "command": "echo \"a\" ; echo 'b' # trailing",
+    "wrapped": "$LASTEXITCODE = 126; \u0026 'C:\\Users\\O''Brien Smith\\.golem\\bin\\hook\\pwsh.exe' -NoProfile -NonInteractive -EncodedCommand ZQBjAGgAbwAgACIAYQAiACAAOwAgAGUAYwBoAG8AIAAnAGIAJwAgACMAIAB0AHIAYQBpAGwAaQBuAGcA; exit $LASTEXITCODE \u003c# echo \"a\" ; echo 'b' # trailing #\u003e"
+  },
+  {
+    "shim": "C:\\Users\\O'Brien Smith\\.golem\\bin\\hook\\pwsh.exe",
+    "command": "echo done #\u003e Remove-Item -Recurse C:\\ \u003c#",
+    "wrapped": "$LASTEXITCODE = 126; \u0026 'C:\\Users\\O''Brien Smith\\.golem\\bin\\hook\\pwsh.exe' -NoProfile -NonInteractive -EncodedCommand ZQBjAGgAbwAgAGQAbwBuAGUAIAAjAD4AIABSAGUAbQBvAHYAZQAtAEkAdABlAG0AIAAtAFIAZQBjAHUAcgBzAGUAIABDADoAXAAgADwAIwA=; exit $LASTEXITCODE \u003c# echo done # \u003e Remove-Item -Recurse C:\\ \u003c# #\u003e"
+  },
+  {
+    "shim": "C:\\Users\\O'Brien Smith\\.golem\\bin\\hook\\pwsh.exe",
+    "command": "‘curly’ ‚low‛",
+    "wrapped": "$LASTEXITCODE = 126; \u0026 'C:\\Users\\O''Brien Smith\\.golem\\bin\\hook\\pwsh.exe' -NoProfile -NonInteractive -EncodedCommand GCBjAHUAcgBsAHkAGSAgABogbABvAHcAGyA=; exit $LASTEXITCODE \u003c# ‘curly’ ‚low‛ #\u003e"
+  },
+  {
+    "shim": "C:\\Users\\O'Brien Smith\\.golem\\bin\\hook\\pwsh.exe",
+    "command": "",
+    "wrapped": null
+  },
+  {
+    "shim": "C:\\Users\\O'Brien Smith\\.golem\\bin\\hook\\pwsh.exe",
+    "command": " ",
+    "wrapped": null
+  },
+  {
+    "shim": "C:\\Users\\O'Brien Smith\\.golem\\bin\\hook\\pwsh.exe",
+    "command": "a\u0000b",
+    "wrapped": null
+  },
+  {
+    "shim": "C:\\Users\\O'Brien Smith\\.golem\\bin\\hook\\pwsh.exe",
+    "command": "$LASTEXITCODE = 126; \u0026 'C:\\Users\\O''Brien Smith\\.golem\\bin\\hook\\pwsh.exe' -NoProfile -NonInteractive -EncodedCommand ZwBpAHQAIABzAHQAYQB0AHUAcwA=; exit $LASTEXITCODE \u003c# git status #\u003e",
+    "wrapped": "$LASTEXITCODE = 126; \u0026 'C:\\Users\\O''Brien Smith\\.golem\\bin\\hook\\pwsh.exe' -NoProfile -NonInteractive -EncodedCommand ZwBpAHQAIABzAHQAYQB0AHUAcwA=; exit $LASTEXITCODE \u003c# git status #\u003e"
+  },
+  {
+    "shim": "C:\\Users\\O'Brien Smith\\.golem\\bin\\hook\\pwsh.exe",
+    "command": "$LASTEXITCODE = 126; \u0026 'C:\\Users\\O''Brien Smith\\.golem\\bin\\hook\\pwsh.exe' -NoProfile -NonInteractive -EncodedCommand ZwBpAHQAIABzAHQAYQB0AHUAcwA=; exit $LASTEXITCODE \u003c# git status #\u003e; whoami",
+    "wrapped": "$LASTEXITCODE = 126; \u0026 'C:\\Users\\O''Brien Smith\\.golem\\bin\\hook\\pwsh.exe' -NoProfile -NonInteractive -EncodedCommand JABMAEEAUwBUAEUAWABJAFQAQwBPAEQARQAgAD0AIAAxADIANgA7ACAAJgAgACcAQwA6AFwAVQBzAGUAcgBzAFwATwAnACcAQgByAGkAZQBuACAAUwBtAGkAdABoAFwALgBnAG8AbABlAG0AXABiAGkAbgBcAGgAbwBvAGsAXABwAHcAcwBoAC4AZQB4AGUAJwAgAC0ATgBvAFAAcgBvAGYAaQBsAGUAIAAtAE4AbwBuAEkAbgB0AGUAcgBhAGMAdABpAHYAZQAgAC0ARQBuAGMAbwBkAGUAZABDAG8AbQBtAGEAbgBkACAAWgB3AEIAcABBAEgAUQBBAEkAQQBCAHoAQQBIAFEAQQBZAFEAQgAwAEEASABVAEEAYwB3AEEAPQA7ACAAZQB4AGkAdAAgACQATABBAFMAVABFAFgASQBUAEMATwBEAEUAIAA8ACMAIABnAGkAdAAgAHMAdABhAHQAdQBzACAAIwA+ADsAIAB3AGgAbwBhAG0AaQA=; exit $LASTEXITCODE \u003c# $LASTEXITCODE = 126; \u0026 'C:\\Users\\O''Brien Smith\\.golem\\bin\\hook\\pwsh.exe' -NoProfile -NonInteractive -EncodedCommand ZwBpAHQAIABzAHQAYQB0AHUAcwA=; exit $LASTEXITCODE \u003c# git status # \u003e; whoami #\u003e"
+  }
+]

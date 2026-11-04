@@ -236,12 +236,17 @@ func isDir(path string) bool {
 	return err == nil && st.IsDir()
 }
 
-func (s *scan) display(path string) string {
-	sep := string(filepath.Separator)
-	if s.env.Home != "" && strings.HasPrefix(path, s.env.Home+sep) {
-		return "~" + sep + strings.TrimPrefix(path, s.env.Home+sep)
+func (s *scan) display(path string) string { return displayPath(s.env.Home, path) }
+
+// displayPath is a location as every report writes it: the home directory as
+// ~ and forward slashes on every OS, so one machine's findings read alike and
+// key alike wherever they are shown. A Windows registry key keeps its own
+// backslashes.
+func displayPath(home, path string) string {
+	if strings.HasPrefix(path, `HKCU\`) || strings.HasPrefix(path, `HKLM\`) {
+		return path
 	}
-	return path
+	return DisplayHome(home, path)
 }
 
 func readSettings(path string) map[string]any {

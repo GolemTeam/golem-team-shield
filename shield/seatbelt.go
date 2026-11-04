@@ -84,6 +84,11 @@ var protectedWrites = []match{
 	lit(".hermes/config.yaml"),
 	sub(".openclaw/extensions/golem"),
 	lit(".openclaw/openclaw.json"),
+	sub(".copilot/hooks"),
+	lit(".copilot/config.json"),
+	lit(".copilot/settings.json"),
+	lit(".gemini/config/hooks.json"),
+	lit(".gemini/config/config.json"),
 	lit(".zshrc"),
 	lit(".zprofile"),
 	lit(".zshenv"),
@@ -111,6 +116,17 @@ var agentSockets = []match{
 }
 
 var keychainServices = []string{"com.apple.SecurityServer", "com.apple.securityd.xpc"}
+
+// handOffServices and handOffTools give another app something to do outside
+// the jail: `open https://…` asks LaunchServices to start the browser, and an
+// AppleScript can tell Finder to open a location. Either sends what a command
+// read past a confined network, so both go wherever the network does. Measured
+// on macOS 26: git, xcrun, security, go, swift, brew, python, node and docker
+// all work without them. A program that sends Apple events itself, not
+// through these tools, still can.
+var handOffServices = `^com\.apple\.coreservices\.`
+
+var handOffTools = []string{"/usr/bin/osascript", "/usr/bin/automator", "/usr/bin/shortcuts"}
 
 // DNS goes to mDNSResponder over Mach IPC, not a socket, so denying the
 // network alone leaves it open as an exfiltration channel.
@@ -199,7 +215,10 @@ func CompileSeatbelt(p Policy, c Context) (string, error) {
 		// Unix sockets stay as the grants below leave them.
 		w.bare("deny network-outbound")
 		w.b.WriteString("(allow network-outbound\n  (remote unix-socket (path-regex #\"^/\"))")
-		if c.ProxyPort > 0 {
+		switch {
+		case AllowsLoopback(p.AllowedHosts):
+			w.b.WriteString("\n  (remote ip \"localhost:*\")")
+		case c.ProxyPort > 0:
 			w.b.WriteString(fmt.Sprintf("\n  (remote ip \"localhost:%d\")", c.ProxyPort))
 		}
 		w.b.WriteString(")\n")
@@ -223,6 +242,9 @@ func CompileSeatbelt(p Policy, c Context) (string, error) {
 	if p.Tainted() {
 		w.bare("deny network*")
 		w.services(resolverServices)
+	}
+	if p.Tainted() || p.Proxied() {
+		w.handOff()
 	}
 	return b.String(), nil
 }
@@ -277,6 +299,16 @@ func (w *profile) services(names []string) {
 		w.b.WriteString("\n  (global-name " + quote(n) + ")")
 	}
 	w.end("deny")
+}
+
+func (w *profile) handOff() {
+	w.b.WriteString("(deny mach-lookup\n  (global-name-regex #\"" + handOffServices + "\")")
+	w.end("deny")
+	var tools []match
+	for _, t := range handOffTools {
+		tools = append(tools, absLit(t))
+	}
+	w.paths("deny process-exec", "", tools)
 }
 
 // Socket filters take path-literal and path-regex where file filters take

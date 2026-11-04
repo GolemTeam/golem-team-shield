@@ -71,6 +71,13 @@ type WindowsJail struct {
 	// AppContainer, which can't read the user's toolchains, so a tainted
 	// session's commands don't run at all.
 	Refuse bool `json:"refuse,omitempty"`
+	// LowIntegrity runs the shell at low integrity, and LowRoots are the
+	// directories the shim labels low so it may still write them. Windows
+	// refuses a low-integrity process every write to an object labelled
+	// higher, whatever its ACL, and leaves reads alone: the allow list that
+	// deny entries can't express.
+	LowIntegrity bool     `json:"low_integrity,omitempty"`
+	LowRoots     []string `json:"low_roots,omitempty"`
 }
 
 func (j WindowsJail) Hash() string {
@@ -200,6 +207,14 @@ func CompileWindows(p Policy, c Context) (WindowsJail, error) {
 	}
 	if !g.Docker {
 		j.DropGroups = []string{"docker-users"}
+	}
+	if p.ConfinedWrites() {
+		j.LowIntegrity = true
+		for _, r := range writeRoots(p, c, "windows") {
+			if fi, err := os.Lstat(r); err == nil && fi.IsDir() {
+				j.LowRoots = append(j.LowRoots, r)
+			}
+		}
 	}
 	return j, nil
 }
