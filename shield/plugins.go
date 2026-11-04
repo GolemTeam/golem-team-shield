@@ -20,9 +20,12 @@ type pluginAgent struct {
 	shim          string
 	windows       string
 	update        string
-	// windowsRewrites marks a plugin that rewrites PowerShell commands on
-	// Windows; "" is one that can't be jailed there yet, said by windows.
+	// windowsRewrites marks a plugin that rewrites commands on Windows; "" is
+	// one that can't be jailed there yet, said by windows.
 	windowsRewrites string
+	// gitBash: on Windows it runs Git Bash, so its shim is the bash.exe one,
+	// named by its Git Bash path; otherwise PowerShell's in the hook directory.
+	gitBash bool
 }
 
 var pluginAgents = []pluginAgent{
@@ -32,10 +35,11 @@ var pluginAgents = []pluginAgent{
 		plugin: func(env CoverageEnv) string {
 			return filepath.Join(env.Home, ".hermes", "plugins", "golem", "__init__.py")
 		},
-		rewrites: "def on_shield_rewrite(",
-		shim:     "bash",
-		windows:  "Hermes runs Git Bash on Windows, which the Golem jail doesn't cover through its plugin yet",
-		update:   "golem update hermes-plugin",
+		rewrites:        "def on_shield_rewrite(",
+		shim:            "bash",
+		windowsRewrites: "def shield_msys_path(",
+		gitBash:         true,
+		update:          "golem update hermes-plugin",
 	},
 	{
 		client: "openclaw", label: "OpenClaw",
@@ -72,6 +76,8 @@ func pluginCoverage(a pluginAgent) func(CoverageEnv) (AgentCoverage, bool) {
 		case env.GOOS == "windows" && a.windowsRewrites == "":
 			c.Detail = a.windows
 			return c, true
+		case env.GOOS == "windows" && a.gitBash:
+			rewrites, shell = a.windowsRewrites, filepath.Join("..", "bash.exe")
 		case env.GOOS == "windows":
 			rewrites, shell = a.windowsRewrites, "pwsh.exe"
 		case shell == "":
@@ -87,6 +93,8 @@ func pluginCoverage(a pluginAgent) func(CoverageEnv) (AgentCoverage, bool) {
 			c.Detail = a.label + "'s shell commands run without the Golem jail: the Golem plugin isn't installed"
 		case !strings.Contains(string(src), rewrites):
 			c.Detail = a.label + "'s Golem plugin predates the jail: run `" + a.update + "` to update it"
+		case env.GOOS == "windows" && a.gitBash && !msysPlain(shim):
+			c.Detail = a.label + "'s commands run in Git Bash on Windows, which can't name the Golem shim at " + tilde(env.Home, shim) + " unquoted (a space in the path)"
 		case !env.ShimReady(shim):
 			c.Detail = a.label + "'s plugin would run its shell commands in the Golem jail, but " + tilde(env.Home, shim) + " is not installed"
 		default:
@@ -95,4 +103,9 @@ func pluginCoverage(a pluginAgent) func(CoverageEnv) (AgentCoverage, bool) {
 		}
 		return c, true
 	}
+}
+
+func msysPlain(p string) bool {
+	_, plain := MSYSPath(p)
+	return plain
 }

@@ -10,7 +10,7 @@ var Attachments = []Attachment{
 	{Client: "gemini-cli", FreeTool: AttachHook, Agent: AttachHook},
 	{Client: "cursor", FreeTool: AttachHook, Agent: AttachHook},
 	{Client: "copilot", FreeTool: AttachHook, Agent: AttachHook},
-	{Client: "antigravity", Agent: AttachHook, Why: "golem-exec doesn't register Antigravity's hook yet"},
+	{Client: "antigravity", Agent: AttachHook, Why: "Antigravity's hook must answer a decision, and any golem-exec gave would change whether it asks; the agent's hook already answers one"},
 	{Client: "hermes", Agent: AttachPlugin, Why: "the jail reaches Hermes through the Golem plugin, which only the agent installs"},
 	{Client: "openclaw", Agent: AttachPlugin, Why: "the jail reaches OpenClaw through the Golem plugin, which only the agent installs"},
 }

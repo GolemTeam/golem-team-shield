@@ -60,8 +60,8 @@ homebrew_casks:
     manpages: [man/golem-exec.1, man/golem-check.1]
     caveats: |
       Run `golem-exec install` to jail the shell commands Claude Code, Codex,
-      Gemini CLI and Cursor run, then restart them. `golem-check` grades how
-      your agents are set up.
+      Gemini CLI, Cursor and Copilot CLI run, then restart them. `golem-check`
+      grades how your agents are set up.
     # The binaries are not notarized yet, so Gatekeeper would refuse them.
     # Claude Code runs the copy `golem-exec install` put in ~/.golem/bin, so an
     # upgrade refreshes that copy too; it does nothing if none is installed.

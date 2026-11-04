@@ -112,3 +112,16 @@ func LinkHookShims(binDir, binary string) error {
 	}
 	return nil
 }
+
+// MSYSPath is a Windows path as Git Bash names it (C:\Users\x\a.exe is
+// /c/Users/x/a.exe), and whether that is plain enough for Wrap's unquoted
+// shim. Hermes runs its commands in Git Bash on Windows, so its rewrite names
+// the Windows shim this way.
+func MSYSPath(win string) (string, bool) {
+	if len(win) < 3 || win[1] != ':' || (win[2] != '\\' && win[2] != '/') {
+		return "", false
+	}
+	drive := strings.ToLower(win[:1])
+	p := "/" + drive + strings.ReplaceAll(win[2:], `\`, "/")
+	return p, safePathRE.MatchString(p)
+}

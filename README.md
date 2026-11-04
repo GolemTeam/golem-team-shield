@@ -60,8 +60,9 @@ of their own, listed under
 
 The rewritten command is a plain `bash -c '…'` or `zsh -c '…'`, so the agent
 still asks you about the command it meant to run, and your allow and deny rules
-still match it. On Windows, Codex, Gemini CLI, Cursor and Copilot CLI run
-PowerShell, which the jail doesn't cover yet. On macOS, a command an agent runs inside its own
+still match it. On Windows these agents run PowerShell. The jail can run it, but
+their commands aren't rewritten there yet: Codex's, Gemini CLI's and Copilot
+CLI's own approval would see only the wrapper, not the command. On macOS, a command an agent runs inside its own
 sandbox (Codex's default, or Cursor's or Gemini CLI's when turned on) stays in
 that sandbox, because macOS can't put one sandbox inside another. On Linux the
 two stack.

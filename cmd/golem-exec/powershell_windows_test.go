@@ -87,3 +87,58 @@ func TestAWrappedPowerShellCommandRunsJailedAndUnchanged(t *testing.T) {
 		t.Errorf("the user lost their own key: %v", err)
 	}
 }
+
+// Hermes runs its commands in Git Bash on Windows, and its plugin rewrites one
+// to name the bash.exe shim by its Git Bash path (/c/Users/...).
+func TestGitBashRunsTheShimByItsGitBashPath(t *testing.T) {
+	bash := gitBash(t)
+	// A runner's own temp directory is an 8.3 name (RUNNER~1), which Git Bash
+	// can't name unquoted; RUNNER_TEMP is a plain one.
+	home := t.TempDir()
+	if rt := os.Getenv("RUNNER_TEMP"); rt != "" {
+		var err error
+		if home, err = os.MkdirTemp(rt, "golem-hermes-"); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(home) })
+	}
+	shim := filepath.Join(shield.ShimDir(home), "bash.exe")
+	if err := os.MkdirAll(filepath.Dir(shim), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("go", "build", "-o", shim, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+	msys, plain := shield.MSYSPath(shim)
+	switch {
+	case !plain && os.Getenv("RUNNER_TEMP") != "":
+		t.Fatalf("Git Bash can't name %s unquoted, so CI would not have run this", shim)
+	case !plain:
+		t.Skipf("Git Bash can't name %s unquoted", shim)
+	}
+	key := filepath.Join(home, ".ssh", "id_ed25519")
+	if err := os.MkdirAll(filepath.Dir(key), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(key, []byte(testKey), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	keyMSYS, _ := shield.MSYSPath(key)
+	wrapped, err := shield.Wrap(msys, `printf '%s|' "it's"; cat '`+keyMSYS+`' && echo LEAKED; exit 3`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(bash, "-c", wrapped)
+	cmd.Env = append(os.Environ(), "USERPROFILE="+home, "GOLEM_WITNESS_URL=http://127.0.0.1:1")
+	out, err := cmd.CombinedOutput()
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 3 {
+		t.Fatalf("exit %v: %s", err, out)
+	}
+	if !strings.Contains(string(out), "it's|") {
+		t.Errorf("the command reached the shell changed: %q", out)
+	}
+	if strings.Contains(string(out), "PRIVATE") || strings.Contains(string(out), "LEAKED") {
+		t.Errorf("the jail let Git Bash read the key: %q", out)
+	}
+}

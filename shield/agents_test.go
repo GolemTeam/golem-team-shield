@@ -127,3 +127,20 @@ func TestWrapIsIdempotent(t *testing.T) {
 		t.Fatal("a wrap for another shim counted as ours")
 	}
 }
+
+func TestMSYSPath(t *testing.T) {
+	for in, want := range map[string]struct {
+		p  string
+		ok bool
+	}{
+		`C:\Users\dev\.golem\bin\bash.exe`:      {"/c/Users/dev/.golem/bin/bash.exe", true},
+		`D:/home/x/bash.exe`:                    {"/d/home/x/bash.exe", true},
+		`C:\Users\Jo Smith\.golem\bin\bash.exe`: {"/c/Users/Jo Smith/.golem/bin/bash.exe", false},
+		`relative\bash.exe`:                     {"", false},
+		`C:`:                                    {"", false},
+	} {
+		if p, ok := MSYSPath(in); p != want.p || ok != want.ok {
+			t.Errorf("%q: got (%q, %v), want (%q, %v)", in, p, ok, want.p, want.ok)
+		}
+	}
+}

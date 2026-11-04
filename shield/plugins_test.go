@@ -17,6 +17,7 @@ func TestPluginCoverage(t *testing.T) {
 		{"Hermes with the rewrite", "hermes", ".hermes", ".hermes/plugins/golem/__init__.py", "def on_shield_rewrite(tool_name=None):", "linux", Jailed, "through the Golem plugin"},
 		{"Hermes with an old plugin", "hermes", ".hermes", ".hermes/plugins/golem/__init__.py", "def on_pre_tool_call():", "darwin", NotJailed, "golem update hermes-plugin"},
 		{"Hermes with no plugin", "hermes", ".hermes", "", "", "darwin", NotJailed, "isn't installed"},
+		{"Hermes on Windows with a plugin from before it", "hermes", ".hermes", ".hermes/plugins/golem/__init__.py", "def on_shield_rewrite(tool_name=None):", "windows", NotJailed, "golem update hermes-plugin"},
 		{"OpenClaw with the rewrite", "openclaw", ".openclaw/agents", ".openclaw/extensions/golem/index.js", "export function shieldRewrite(toolName) {}", "darwin", Jailed, "through the Golem plugin"},
 		{"OpenClaw on Windows", "openclaw", ".openclaw/agents", ".openclaw/extensions/golem/index.js", "export function shieldRewrite(toolName) {}", "windows", NotJailed, "golem setup-client"},
 	} {
@@ -54,6 +55,7 @@ func TestThePluginsCarryWhatCoverageLooksFor(t *testing.T) {
 		"../../hermes-plugin/golem/__init__.py":                pluginAgents[0].rewrites,
 		"../../witness/assets/openclaw/golem/index.js":         pluginAgents[1].rewrites,
 		"../../witness/assets/openclaw/golem/index.js#windows": pluginAgents[1].windowsRewrites,
+		"../../hermes-plugin/golem/__init__.py#windows":        pluginAgents[0].windowsRewrites,
 		"../../witness/assets/hooks/cursor-hook.sh":            cursorScriptRewrites,
 	} {
 		src, err := os.ReadFile(strings.TrimSuffix(file, "#windows"))
@@ -95,4 +97,30 @@ func TestOpenClawOnWindowsIsJailedThroughThePowerShellShim(t *testing.T) {
 	if c := line(func(string) bool { return false }); c == nil || c.Coverage != NotJailed {
 		t.Fatalf("with no PowerShell shim: %+v", c)
 	}
+}
+
+func TestHermesOnWindowsIsJailedThroughTheGitBashShim(t *testing.T) {
+	home := t.TempDir()
+	plugin := filepath.Join(home, ".hermes", "plugins", "golem", "__init__.py")
+	if err := os.MkdirAll(filepath.Dir(plugin), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(plugin, []byte("def on_shield_rewrite(x):\ndef shield_msys_path(w):\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var asked string
+	for _, l := range CoverageOf(CoverageEnv{Home: home, GOOS: "windows", ShimReady: func(p string) bool { asked = p; return true }, CodexHomes: []string{}}) {
+		if l.Client != "hermes" {
+			continue
+		}
+		_, plain := MSYSPath(filepath.Join(ShimDir(home), "bash.exe"))
+		switch {
+		case !plain && l.Coverage != NotJailed:
+			t.Fatalf("a home Git Bash can't name: %+v", l)
+		case plain && (l.Coverage != Jailed || filepath.Base(asked) != "bash.exe"):
+			t.Fatalf("got %+v, asked about %q", l, asked)
+		}
+		return
+	}
+	t.Fatal("no line for Hermes")
 }
