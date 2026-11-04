@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -55,6 +56,9 @@ func TestClaudeCodeCoverage(t *testing.T) {
 		{"Windows reads its own variable", "windows", `{"env": {"CLAUDE_CODE_SHELL": "HOME/.golem/bin/golem-zsh"}}`, ready, NotJailed, "is not set"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if runtime.GOOS == "windows" && tc.goos != "windows" {
+				t.Skip("a Unix home's paths need a Unix host")
+			}
 			home := coverageHome(t, "")
 			if tc.settings != "" {
 				s := strings.ReplaceAll(tc.settings, "HOME", filepath.ToSlash(home))
@@ -74,12 +78,16 @@ func TestClaudeCodeCoverage(t *testing.T) {
 }
 
 func TestNoLineForAnAgentThatIsNotInstalled(t *testing.T) {
-	if got := CoverageOf(CoverageEnv{Home: t.TempDir(), GOOS: "darwin"}); len(got) != 0 {
+	home := t.TempDir()
+	if got := CoverageOf(CoverageEnv{Home: home, GOOS: "darwin", CodexHomes: []string{filepath.Join(home, ".codex")}}); len(got) != 0 {
 		t.Fatalf("lines for nothing installed: %+v", got)
 	}
 }
 
 func TestCoverageReadsTheShimItself(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the Unix shim layout; Windows's is bash.exe")
+	}
 	home := coverageHome(t, "")
 	shim := filepath.Join(ShimDir(home), "golem-zsh")
 	settings := `{"env": {"CLAUDE_CODE_SHELL": "` + shim + `"}}`
@@ -101,6 +109,9 @@ func TestCoverageReadsTheShimItself(t *testing.T) {
 }
 
 func TestFromInsideTheJailTheShimStillCounts(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the Unix shim layout; Windows's is bash.exe")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("root reads through a denied directory")
 	}

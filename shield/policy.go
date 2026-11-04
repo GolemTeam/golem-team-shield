@@ -80,6 +80,9 @@ type Context struct {
 	// inside ~/.ssh.
 	SSHReadable []string
 	ExtraWrite  []string
+	// WorkingDir is where the command runs. Outside a repository, a session
+	// confined to the workspace may write there, as it would in a project.
+	WorkingDir string
 	// SystemTmp are the temp directories a clean session confined to the
 	// workspace may still write: $TMPDIR as the agent set it, and /tmp.
 	SystemTmp []string
@@ -126,6 +129,10 @@ func (c Context) validate() error {
 	others := append([]string{c.TurnTmp, c.AgentSocket, c.HarnessTmp}, c.ExtraWrite...)
 	others = append(others, c.HarnessFiles...)
 	others = append(others, c.SystemTmp...)
+	if c.WorkingDir != "" && within(c.Home, c.WorkingDir) {
+		return errors.New("working dir contains the home directory")
+	}
+	others = append(others, c.WorkingDir)
 	if c.ProxyPort < 0 || c.ProxyPort > 65535 {
 		return errors.New("proxy port out of range")
 	}

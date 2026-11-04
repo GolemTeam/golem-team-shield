@@ -9,7 +9,7 @@ import (
 // statusAgents says, per agent installed here, whether its shell commands run
 // in the jail: the same lines `golem check` and `golem doctor` read.
 func (s *setup) statusAgents() {
-	cov := shield.CoverageOf(shield.CoverageEnv{Home: s.home, GOOS: s.goos})
+	cov := shield.CoverageOf(shield.CoverageEnv{Home: s.home, GOOS: s.goos, LoginShell: s.loginShell, CodexHomes: s.codexHomes()})
 	if len(cov) == 0 {
 		fmt.Fprintln(s.stdout, "agents       none here that the jail can attach to")
 		return

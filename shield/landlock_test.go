@@ -44,7 +44,7 @@ func TestLandlockCleanTakesCredentialsAndPersistenceOnly(t *testing.T) {
 			t.Errorf("%s isn't readable", p)
 		}
 	}
-	for _, p := range []string{".zshrc", ".config/git/config", ".claude/settings.json", ".ssh/config"} {
+	for _, p := range []string{".zshrc", ".config/git/config", ".claude/settings.json", ".ssh/config", ".codex/hooks.json", ".codex/config.toml", ".gemini/settings.json"} {
 		if access(j, h(p))&llWriteFile != 0 {
 			t.Errorf("%s is writable", p)
 		}

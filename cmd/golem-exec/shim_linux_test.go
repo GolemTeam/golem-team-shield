@@ -328,3 +328,34 @@ func TestLinuxNamespacedCommandHasNoCapabilities(t *testing.T) {
 		t.Errorf("the command kept capabilities or changed user: %s", got)
 	}
 }
+
+func TestLinuxConfinedWritesOutsideARepositoryAndIntoNewCaches(t *testing.T) {
+	needLandlock(t)
+	w := newFakeWitness(t, shield.Policy{Enforce: true, State: shield.Clean, Grants: shield.AllGrants(), Writes: shield.WritesWorkspace})
+	s, out, _ := testShim(t, w.URL)
+	s.cwd = filepath.Join(s.cwd, "plain")
+	if err := os.MkdirAll(s.cwd, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(s.home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(s.cwd); err != nil {
+		t.Fatal(err)
+	}
+	script := `echo x > inside.txt && echo INSIDE; echo x > $HOME/.cache/ok && echo CACHE; mkdir -p $HOME/.npm/_cacache && echo NPM;` +
+		` echo x > $HOME/outside 2>/dev/null && echo OUTSIDE; true`
+	s.run("/bin/bash", []string{"-c", script})
+	got := out.String()
+	for _, want := range []string{"INSIDE", "CACHE", "NPM"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("%s wasn't writable: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "OUTSIDE") {
+		t.Errorf("a write left the roots: %s", got)
+	}
+	if _, err := os.Stat(filepath.Join(s.home, "go")); err == nil {
+		t.Error("a cache for a tool the machine doesn't have was created")
+	}
+}

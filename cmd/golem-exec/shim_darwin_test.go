@@ -240,3 +240,16 @@ func TestShimWorkspaceWritesStayInTheRoots(t *testing.T) {
 		t.Errorf("runs %+v", w.runs)
 	}
 }
+
+func TestShimConfinedWritesOutsideARepository(t *testing.T) {
+	skipIfNested(t)
+	w := newFakeWitness(t, shield.Policy{Enforce: true, State: shield.Clean, Grants: shield.AllGrants(), Writes: shield.WritesWorkspace})
+	s, stdout, _ := testShim(t, w.URL)
+	s.cwd = filepath.Join(s.cwd, "plain")
+	plant(t, filepath.Join(s.cwd, "README"), "")
+	plant(t, filepath.Join(s.home, "notes"), "")
+	s.run("/bin/zsh", []string{"-c", `cd "` + s.cwd + `"; echo x > inside.txt && echo INSIDE; echo x >> $HOME/notes && echo HOMEWRITE; true`})
+	if got := stdout.String(); !strings.Contains(got, "INSIDE") || strings.Contains(got, "HOMEWRITE") {
+		t.Errorf("writes: %s", got)
+	}
+}

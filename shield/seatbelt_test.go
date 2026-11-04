@@ -25,6 +25,8 @@ func TestCleanWithNoGrantsDeniesCredentialsButLeavesWritesAndNetworkOpen(t *test
 		`(global-name "com.apple.SecurityServer")`,
 		`(path-literal "/private/var/run/docker.sock")`,
 		`(literal "/Users/dev/.zshrc")`,
+		`(literal "/Users/dev/.codex/hooks.json")`,
+		`(literal "/Users/dev/.gemini/settings.json")`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("ungranted profile lacks %s", want)

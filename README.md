@@ -158,7 +158,7 @@ command and setting; the release archives carry the pages in `man/`.
 | `cloud_credentials` | `~/.aws`, gcloud, Azure, kube and the Docker, npm and PyPI logins, and the cloud tools' variables (`AWS_*`, `KUBECONFIG` and others). `golem-exec install --strict` writes `false`. |
 | `env_allow` | Secret-shaped variables to keep, by name or as a `PREFIX*`. Ignored in lockdown. |
 | `env_deny` | Variables to remove, by name or as a `PREFIX*`. |
-| `writes` | `"workspace"` keeps writes to the project, temp, the tool caches and `allow_write`; `"anywhere"` (the default) denies only the protected files. `--strict` writes `"workspace"`. On Windows writes stay as `"anywhere"` for now. |
+| `writes` | `"workspace"` keeps writes to the project (the git repository a command runs in, or its working directory outside one), temp, the tool caches and `allow_write`; `"anywhere"` (the default) denies only the protected files. `--strict` writes `"workspace"`. On Windows writes stay as `"anywhere"` for now. |
 | `allow_write` | More places a `"workspace"` command may write: absolute paths or `~/…`, such as `~/go/bin`. One that holds your home directory is ignored. |
 | `network` | `"allowlist"` lets commands reach only `allowed_hosts`, through a proxy; everything else, DNS included, is refused. `"open"` (the default) leaves the network alone. On Linux it uses a network namespace, or where the kernel allows none, Landlock's port rule, which lets a program that ignores the proxy reach any host on the proxy's port. On Windows only programs that use the proxy are held to the list. |
 | `allowed_hosts` | `example.com`, `*.example.com` (its subdomains) or `*` (any public host, everything recorded). Any port. Loopback and the cloud metadata address are never reachable. |

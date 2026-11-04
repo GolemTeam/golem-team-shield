@@ -213,7 +213,7 @@ func TestStatusSaysWhatCommandsGet(t *testing.T) {
 	}
 	f.out.Reset()
 	f.status()
-	for _, want := range []string{"Claude Code's shell commands run in the Golem jail (CLAUDE_CODE_SHELL) [jailed]", "lockdown on", "cloud credentials off"} {
+	for _, want := range []string{"Claude Code's shell commands run in the Golem jail (" + f.claudeShell().Var() + ") [jailed]", "lockdown on", "cloud credentials off"} {
 		if !strings.Contains(f.out.String(), want) {
 			t.Errorf("missing %q:\n%s", want, f.out.String())
 		}

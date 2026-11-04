@@ -156,3 +156,22 @@ func TestWriteRootsDependOnTheStateAndTheSetting(t *testing.T) {
 		t.Error("Linux got macOS's cache directory")
 	}
 }
+
+func TestAWorkingDirOutsideARepositoryIsTheProjectForConfinedWritesOnly(t *testing.T) {
+	c := testContext()
+	c.Workspace, c.WorkingDir = nil, "/Users/dev/scratch"
+	if !contains(writeRoots(Policy{State: Clean, Writes: WritesWorkspace}, c, "darwin"), "/Users/dev/scratch") {
+		t.Error("a confined session can't write its working directory")
+	}
+	if contains(writeRoots(Policy{State: Tainted}, c, "darwin"), "/Users/dev/scratch") {
+		t.Error("a tainted session may write outside a repository")
+	}
+	c.Workspace = []string{"/Users/dev/src/app"}
+	if contains(writeRoots(Policy{State: Clean, Writes: WritesWorkspace}, c, "darwin"), "/Users/dev/scratch") {
+		t.Error("the working directory counted although a repository holds it")
+	}
+	c.WorkingDir = "/Users"
+	if _, err := CompileSeatbelt(Policy{State: Clean, Writes: WritesWorkspace}, c); err == nil {
+		t.Error("a working directory holding home was accepted")
+	}
+}

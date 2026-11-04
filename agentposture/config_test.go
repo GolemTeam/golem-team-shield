@@ -2,6 +2,7 @@ package agentposture
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -51,7 +52,6 @@ func TestTheConfigScanJoinsTheReportByArea(t *testing.T) {
 		"mcp_pipe_to_shell":    {AreaMCPServers, "claude-code", "bad starts by piping a download into a shell"},
 		"mcp_unpinned_package": {AreaMCPServers, "claude-code", "gh runs @modelcontextprotocol/server-github without a pinned version, so each start may fetch different code"},
 		"mcp_plaintext_secret": {AreaSecrets, "claude-code", "gh has a credential in plain text in env GITHUB_TOKEN"},
-		"hook_pipe_to_shell":   {AreaHooks, "claude-code", "a Stop hook pipes a download into a shell"},
 		"gd-conceal":           {AreaInstructions, "cursor", "style.mdc: tells the agent to keep something from the user"},
 	} {
 		it, ok := byCheck[check]
@@ -59,7 +59,7 @@ func TestTheConfigScanJoinsTheReportByArea(t *testing.T) {
 			t.Errorf("%s: %+v", check, it)
 		}
 	}
-	for _, a := range []string{AreaMCPServers, AreaSecrets, AreaHooks, AreaInstructions} {
+	for _, a := range []string{AreaMCPServers, AreaSecrets, AreaInstructions} {
 		if !contains(res.Read, a) {
 			t.Errorf("%s not read: %v", a, res.Read)
 		}
@@ -151,6 +151,61 @@ func TestContainersAndFilesystemRoots(t *testing.T) {
 	for _, k := range []string{"mcp_unpinned_image/pinned", "mcp_unpinned_image/digest", "mcp_broad_root/fs-repo", "mcp_container_escape/img"} {
 		if d, ok := got[k]; ok {
 			t.Errorf("%s: %q", k, d)
+		}
+	}
+}
+
+func TestSecretsInAgentSettingsAndReadableCredentialStores(t *testing.T) {
+	env := postureTestEnv(t)
+	project := filepath.Join(t.TempDir(), "repo")
+	projects, _ := json.Marshal(map[string]any{"projects": map[string]any{project: map[string]any{}},
+		"mcpServers": map[string]any{}})
+	writePostureFile(t, filepath.Join(env.Home, ".claude.json"), string(projects))
+	const token = "sk-ant-api03-" + "abcdefghijklmnopqrstuvwxyz012345"
+	writePostureFile(t, filepath.Join(env.Home, ".claude", "settings.json"),
+		`{"env":{"ANTHROPIC_API_KEY":"`+token+`","DEBUG":"1","GITHUB_TOKEN":"${GITHUB_TOKEN}"}}`)
+	writePostureFile(t, filepath.Join(project, ".claude", "settings.json"), `{"env":{"SERVICE_TOKEN":"q8Zp2mLx7Rv4Kt9Wb3Nc"}}`)
+	writePostureFile(t, filepath.Join(project, ".mcp.json"),
+		`{"mcpServers":{"gh":{"command":"x","env":{"GITHUB_TOKEN":"ghp_abcdefghijklmnopqrstuvwxyz0123456789"}}}}`)
+	writePostureFile(t, filepath.Join(env.Home, ".gemini", ".env"), "# key\nexport GEMINI_API_KEY=\"AIza"+strings.Repeat("x1", 17)+"y\"\n")
+	writePostureFile(t, filepath.Join(env.Home, ".codex", "auth.json"), `{"tokens":{}}`)
+	if unixModes {
+		if err := os.Chmod(filepath.Join(env.Home, ".codex", "auth.json"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	res := ScanAll(env)
+	got := map[string]Item{}
+	for _, it := range res.Items {
+		if it.Area == AreaSecrets {
+			got[it.Check+"/"+it.Scope+"/"+it.Setting] = it
+		}
+	}
+	for k, sev := range map[string]string{
+		"config_plaintext_secret/user/env.ANTHROPIC_API_KEY": Info,
+		"config_plaintext_secret/project/env.SERVICE_TOKEN":  Suspicious,
+		"config_plaintext_secret/user/.env.GEMINI_API_KEY":   Info,
+		"mcp_plaintext_secret/project/":                      Suspicious,
+	} {
+		if it, ok := got[k]; !ok || it.Severity != sev {
+			t.Errorf("%s: %+v in %v", k, it, keys(got))
+		}
+	}
+	if unixModes {
+		if it := got["credential_file_readable/user/"]; it.Client != "codex" || it.Severity != Suspicious {
+			t.Errorf("readable auth.json: %+v", it)
+		}
+	}
+	for k := range got {
+		if strings.Contains(k, "GITHUB_TOKEN") && strings.Contains(k, "config") || strings.Contains(k, "DEBUG") {
+			t.Errorf("a reference or plain setting is reported: %s", k)
+		}
+	}
+	b, _ := json.Marshal(res.Items)
+	for _, v := range []string{"abcdefghij", "q8Zp2mLx", "x1x1"} {
+		if strings.Contains(string(b), v) {
+			t.Fatalf("a secret reached the report: %s", v)
 		}
 	}
 }

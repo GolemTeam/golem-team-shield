@@ -55,6 +55,9 @@ func (s *shim) jailed(rec *shield.RunRecord, p shield.Policy, tmp string, argv, 
 	if p.Tainted() || p.ConfinedWrites() {
 		c.HarnessFiles = harnessFiles(c.HarnessTmp, argv[1:])
 	}
+	if p.ConfinedWrites() {
+		makeToolCaches(c.Home)
+	}
 	j, err := shield.CompileLandlock(p, c, abi)
 	if err != nil {
 		j, err = shield.CompileLandlock(p, withoutWorkspace(c), abi)
@@ -209,6 +212,20 @@ func (s *shim) readStageCtl(ctl *os.File) byte {
 	}
 	s.proxy.Serve(l)
 	return ctlNamespace
+}
+
+// makeToolCaches creates the tool caches a confined session may write that
+// aren't there yet, where their parent is: Landlock grants only paths that
+// exist, and the home directory they would be created in isn't writable. One
+// whose parent is missing too (~/go/pkg/mod on a machine that never ran Go)
+// is left for the tool to make outside the jail, so a machine doesn't gain
+// directories for tools it doesn't have.
+func makeToolCaches(home string) {
+	for _, d := range shield.ToolCaches(home, "linux") {
+		if fi, err := os.Stat(filepath.Dir(d)); err == nil && fi.IsDir() {
+			_ = os.Mkdir(d, 0o700)
+		}
+	}
 }
 
 var harnessFileRE = regexp.MustCompile(`[^\s'"<>|;&]*/claude-[A-Za-z0-9-]+-cwd`)

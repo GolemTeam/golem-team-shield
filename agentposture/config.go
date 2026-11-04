@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -309,13 +310,18 @@ var (
 	movingTags    = map[string]bool{"latest": true, "next": true, "beta": true, "alpha": true, "canary": true, "nightly": true}
 )
 
+// unixModes is whether this filesystem's permission bits mean anything: Go
+// reports 0666 for every file on Windows. It is the running OS, not Env.GOOS,
+// since a test can describe another OS's layout on any machine.
+var unixModes = runtime.GOOS != "windows"
+
 func (s *configScanner) scanServers(f configFile, info os.FileInfo, servers map[string]MCPServer) {
 	names := make([]string, 0, len(servers))
 	for n := range servers {
 		names = append(names, n)
 	}
 	sort.Strings(names)
-	loose := info != nil && s.env.GOOS != "windows" && info.Mode().Perm()&0o044 != 0
+	loose := info != nil && unixModes && info.Mode().Perm()&0o044 != 0
 	for _, name := range names {
 		d := servers[name]
 		line := strings.TrimSpace(d.Command + " " + strings.Join(d.Args, " "))

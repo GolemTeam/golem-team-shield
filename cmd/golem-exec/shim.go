@@ -141,6 +141,9 @@ func (s *shim) context(tmp, tag string) shield.Context {
 		ProxyPort:   s.proxyPort,
 	}
 	c.SystemTmp = s.systemTmp()
+	if cwd := realPath(s.cwd); cwd != "" && !holds(cwd, c.Home) {
+		c.WorkingDir = cwd
+	}
 	c.SSHReadable = shield.SSHReadable(c.Home)
 	ws := shield.FindWorkspace(realPath(s.cwd))
 	for _, w := range ws.Writable {
@@ -245,7 +248,7 @@ func (s *shim) tellRefused(recs []shield.EgressRecord) {
 // validate. The jail without a workspace still holds everything but tainted
 // workspace writes.
 func withoutWorkspace(c shield.Context) shield.Context {
-	c.Workspace, c.WorkspaceProtected, c.HarnessTmp, c.HarnessFiles = nil, nil, "", nil
+	c.Workspace, c.WorkspaceProtected, c.HarnessTmp, c.HarnessFiles, c.WorkingDir = nil, nil, "", nil, ""
 	return c
 }
 

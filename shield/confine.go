@@ -141,6 +141,9 @@ func writeRoots(p Policy, c Context, goos string) []string {
 	}
 	roots := append(append([]string{c.TurnTmp}, c.Workspace...), c.ExtraWrite...)
 	if p.ConfinedWrites() {
+		if len(c.Workspace) == 0 {
+			roots = append(roots, c.WorkingDir)
+		}
 		roots = append(roots, c.SystemTmp...)
 		roots = append(roots, ToolCaches(c.Home, goos)...)
 		roots = append(roots, ExpandWritePaths(p.AllowWrite, c.Home)...)

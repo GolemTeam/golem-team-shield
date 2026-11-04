@@ -23,11 +23,11 @@ import (
 
 const cliUsage = `usage: golem-exec <command>
 
-  install [--strict]   jail every shell command Claude Code runs on this machine
+  install [--strict]   jail the shell commands Claude Code, Codex and Gemini CLI run here
   install --refresh    update an installed shim to this binary, and nothing else
   status               show what is installed and the policy commands get
   test                 check that the jail blocks what it should
-  uninstall [--purge]  put Claude Code's shell back (--purge also removes ~/.golem/shield.json)
+  uninstall [--purge]  put the agents' shells back (--purge also removes ~/.golem/shield.json)
   version              print the version
 
 Settings: ~/.golem/shield.json. --strict also keeps cloud credentials out of reach
@@ -45,7 +45,9 @@ type setup struct {
 	goos       string
 	exe        string
 	loginShell string
+	codexHome  string
 	witness    string
+	stdin      io.Reader
 	stdout     io.Writer
 	stderr     io.Writer
 	canJail    func() bool
@@ -60,8 +62,8 @@ func newSetup(witness string) *setup {
 		exe = real
 	}
 	s := &setup{
-		home: home, goos: runtime.GOOS, exe: exe, loginShell: os.Getenv("SHELL"), witness: witness,
-		stdout: os.Stdout, stderr: os.Stderr, canJail: canJail, selfTest: runThroughShim,
+		home: home, goos: runtime.GOOS, exe: exe, loginShell: os.Getenv("SHELL"), codexHome: os.Getenv("CODEX_HOME"), witness: witness,
+		stdin: os.Stdin, stdout: os.Stdout, stderr: os.Stderr, canJail: canJail, selfTest: runThroughShim,
 	}
 	s.agentRuns = s.agentPresent
 	return s
@@ -86,6 +88,8 @@ func runCommand(s *setup, args []string) int {
 		return s.uninstall(flags["purge"])
 	case "status":
 		return s.status()
+	case "hook":
+		return s.hook(args[1:])
 	case "test":
 		return s.test()
 	case "help", "-h", "--help":
@@ -196,11 +200,15 @@ func (s *setup) install(strict bool) int {
 			current, cs.Var(), cs.Shim, s.settingsPath())
 	}
 
+	if s.wireAgents(false) != 0 {
+		code = 1
+	}
+
 	if s.test() != 0 {
 		code = 1
 	}
 	fmt.Fprintln(s.stdout)
-	fmt.Fprintln(s.stdout, "Restart Claude Code so it runs its shell commands in the jail.")
+	fmt.Fprintln(s.stdout, "Restart your agents so they run their shell commands in the jail.")
 	fmt.Fprintln(s.stdout, "  settings:  "+cfgPath)
 	fmt.Fprintln(s.stdout, "  check:     golem-exec status")
 	fmt.Fprintln(s.stdout, "  remove:    golem-exec uninstall")
@@ -324,6 +332,9 @@ func (s *setup) uninstall(purge bool) int {
 			fmt.Fprintf(s.stdout, "Claude Code: %s\n", c)
 		}
 	}
+	if s.wireAgents(true) != 0 {
+		code = 1
+	}
 	_ = os.RemoveAll(shield.HookShimDir(s.home))
 	for _, p := range append(s.shims(), filepath.Join(s.binDir(), "golem-exec")) {
 		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -335,7 +346,7 @@ func (s *setup) uninstall(purge bool) int {
 		_ = os.Remove(shield.ConfigPath(s.home))
 		_ = os.RemoveAll(filepath.Join(s.home, ".golem", "shield"))
 	}
-	fmt.Fprintln(s.stdout, "Removed the shim. Restart Claude Code.")
+	fmt.Fprintln(s.stdout, "Removed the shim. Restart your agents.")
 	return code
 }
 

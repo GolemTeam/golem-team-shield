@@ -125,7 +125,8 @@ Lockdown ignores
 .TP
 .B writes
 .B \(dqworkspace\(dq
-keeps writes to the project, temp, the tool caches
+keeps writes to the project (the git repository a command runs in, or its
+working directory outside one), temp, the tool caches
 .RI ( ~/.cache ", " ~/.npm ", " ~/go/pkg/mod ", " ~/Library/Caches
 and others) and
 .BR allow_write ;

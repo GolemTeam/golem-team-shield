@@ -83,18 +83,26 @@ func ScanAll(env Env) Result {
 	skip := ManagedAssetPaths(env.Home)
 	cs := ScanConfig(env, skip)
 	for a := range cs.Read {
-		if a != AreaInstructions {
+		if a != AreaInstructions && a != AreaHooks {
 			s.read[a] = true
 		}
 	}
-	// The config scan's own instruction checks stay for the Golem agent's
-	// alerts; the report reads the same files with defscan's rules instead.
+	// The config scan's own instruction and hook checks stay for the Golem
+	// agent's alerts; the report reads the same files with defscan's rules.
 	for _, it := range cs.Items() {
-		if it.Area != AreaInstructions {
-			res.Items = append(res.Items, it)
+		if it.Area == AreaInstructions || it.Area == AreaHooks {
+			continue
 		}
+		if it.Check == "mcp_plaintext_secret" && it.Scope == "project" && it.Severity == Info {
+			it.Severity, it.Detail = Suspicious, it.Detail+", in a repository file, so probably committed"
+		}
+		res.Items = append(res.Items, it)
 	}
 	res.Items = append(res.Items, s.instructionItems(skip)...)
+	res.Items = append(res.Items, s.hookItems()...)
+	res.Items = append(res.Items, s.permissionItems()...)
+	res.Items = append(res.Items, s.secretItems()...)
+	s.read[AreaSecrets] = s.read[AreaSecrets] || len(res.Agents) > 0
 	Sort(res.Items)
 	if len(res.Items) > MaxReportItems {
 		res.Items = res.Items[:MaxReportItems]

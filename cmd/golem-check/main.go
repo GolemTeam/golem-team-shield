@@ -36,7 +36,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	env := agentposture.DefaultEnv()
 	res := agentposture.ScanAll(env)
-	res.Add(shellJailItems(shield.CoverageOf(shield.CoverageEnv{Home: env.Home, GOOS: env.GOOS}))...)
+	res.Add(shellJailItems(shield.CoverageOf(shield.CoverageEnv{Home: env.Home, GOOS: env.GOOS, LoginShell: os.Getenv("SHELL"), CodexHomes: env.CodexHomes}))...)
 	if *asJSON {
 		items := res.Items
 		if items == nil {

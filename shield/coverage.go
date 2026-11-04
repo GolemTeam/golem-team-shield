@@ -45,6 +45,10 @@ type CoverageEnv struct {
 	// ShimReady reports whether a shim path can run; an attach that points at
 	// a shim that can't is not coverage.
 	ShimReady func(path string) bool
+	// LoginShell picks the hook shim (zsh or bash) a hook rewrites to.
+	LoginShell string
+	// CodexHomes overrides CodexHomes(Home).
+	CodexHomes []string
 }
 
 // IsShim reports whether path is one of the shim's names under home.
@@ -105,7 +109,7 @@ func CoverageOf(env CoverageEnv) []AgentCoverage {
 		env.ShimReady = ReadyShim(env.GOOS)
 	}
 	var out []AgentCoverage
-	for _, read := range []func(CoverageEnv) (AgentCoverage, bool){claudeCoverage} {
+	for _, read := range []func(CoverageEnv) (AgentCoverage, bool){claudeCoverage, codexCoverage, geminiCoverage} {
 		if c, ok := read(env); ok {
 			out = append(out, c)
 		}
