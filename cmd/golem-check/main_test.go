@@ -123,3 +123,38 @@ func TestTheShellJailCountsAsAProtection(t *testing.T) {
 	}
 	t.Fatalf("no jailed shell_jail item for Claude Code in %s", out.String())
 }
+
+func TestARepoReportInSARIFFailsOnWhatItFinds(t *testing.T) {
+	withSettings(t, `{}`)
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".claude", "settings.json"), []byte(`{"permissions":{"allow":["Bash(*)"]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	report := filepath.Join(t.TempDir(), "out.sarif")
+	var out, errs bytes.Buffer
+	if code := run([]string{"-repo", repo, "-sarif", "-o", report, "-fail-on", "suspicious"}, &out, &errs); code != 3 {
+		t.Fatalf("exit %d, want 3: %s", code, errs.String())
+	}
+	b, err := os.ReadFile(report)
+	if err != nil || !strings.Contains(string(b), `"ruleId": "shell_allowed"`) || !strings.Contains(string(b), `"uri": ".claude/settings.json"`) {
+		t.Fatalf("%v\n%s", err, b)
+	}
+	if out.Len() != 0 {
+		t.Errorf("wrote to stdout with -o: %s", out.String())
+	}
+	if code := run([]string{"-repo", repo, "-fail-on", "dangerous"}, &out, &errs); code != 0 {
+		t.Errorf("a suspicious finding failed -fail-on dangerous: exit %d", code)
+	}
+}
+
+func TestBadFlagValuesAreUsageErrors(t *testing.T) {
+	var out, errs bytes.Buffer
+	for _, args := range [][]string{{"-fail-on", "high"}, {"-repo", filepath.Join(t.TempDir(), "missing")}} {
+		if code := run(args, &out, &errs); code != 2 {
+			t.Errorf("%v: exit %d, want 2", args, code)
+		}
+	}
+}

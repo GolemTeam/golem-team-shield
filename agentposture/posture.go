@@ -88,6 +88,9 @@ type Env struct {
 	// Projects are repositories agents were seen working in, beyond the ones
 	// ~/.claude.json lists.
 	Projects []string
+	// Repo is set by ScanRepo: only that repository's files are read, so an
+	// agent counts as in use when the repository configures it.
+	Repo string
 }
 
 // DefaultEnv is the current machine's Env.
@@ -138,6 +141,7 @@ type scan struct {
 	items  []Item
 	agents map[string]bool
 	read   map[string]bool
+	roots  []string
 }
 
 // Scan reads every supported agent's settings and returns what it finds,
@@ -344,7 +348,7 @@ type settingsFile struct {
 func (s *scan) claudeSettingsFiles() []settingsFile {
 	var out []settingsFile
 	add := func(scope, path string) {
-		if m := readSettings(path); m != nil {
+		if m := s.readSettings(path); m != nil {
 			out = append(out, settingsFile{scope, path, m})
 		}
 	}
@@ -355,6 +359,19 @@ func (s *scan) claudeSettingsFiles() []settingsFile {
 		add("project", filepath.Join(p, ".claude", "settings.json"))
 	}
 	return out
+}
+
+func (s *scan) claudeInUse() bool {
+	if s.env.Repo != "" {
+		return isDir(filepath.Join(s.env.Repo, ".claude")) || fileExists(filepath.Join(s.env.Repo, ".mcp.json")) ||
+			fileExists(filepath.Join(s.env.Repo, "CLAUDE.md"))
+	}
+	return claudeCodeInUse(s.env.Home)
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func claudeCodeInUse(home string) bool {
@@ -368,7 +385,7 @@ var claudeShellRules = map[string]bool{"Bash": true, "Bash(*)": true, "Bash(:*)"
 
 func (s *scan) claudeCode() {
 	const client = "claude-code"
-	if !claudeCodeInUse(s.env.Home) {
+	if !s.claudeInUse() {
 		return
 	}
 	s.agents[client] = true
@@ -430,7 +447,7 @@ func (s *scan) claudeCode() {
 func (s *scan) cursorCLI() {
 	const client = "cursor"
 	path := filepath.Join(s.env.Home, ".cursor", "cli-config.json")
-	m := readSettings(path)
+	m := s.readSettings(path)
 	if m == nil {
 		return
 	}
@@ -510,7 +527,7 @@ func (s *scan) codex() {
 				sandboxed = path
 			}
 		}
-		if doc := readCodexTOML(path); doc != nil {
+		if doc := s.readCodexTOML(path); doc != nil {
 			if doc[""]["sandbox_mode"] == "danger-full-access" {
 				sandboxed = "-"
 			}
@@ -534,7 +551,7 @@ func (s *scan) codex() {
 		profiles, _ := filepath.Glob(filepath.Join(dir, "*.config.toml"))
 		sort.Strings(profiles)
 		for _, p := range profiles {
-			if doc := readCodexTOML(p); doc != nil {
+			if doc := s.readCodexTOML(p); doc != nil {
 				s.codexTable(client, "user", p, strings.TrimSuffix(filepath.Base(p), ".config.toml"), doc[""])
 			}
 		}
@@ -571,11 +588,11 @@ func (s *scan) codexTable(client, scope, path, profile string, t map[string]stri
 func (s *scan) gemini() {
 	const client = "gemini-cli"
 	var files []settingsFile
-	if m := readSettings(s.env.GeminiSystem); m != nil {
+	if m := s.readSettings(s.env.GeminiSystem); m != nil {
 		files = append(files, settingsFile{"managed", s.env.GeminiSystem, m})
 	}
 	userPath := filepath.Join(s.env.Home, ".gemini", "settings.json")
-	if m := readSettings(userPath); m != nil {
+	if m := s.readSettings(userPath); m != nil {
 		files = append(files, settingsFile{"user", userPath, m})
 	}
 	if len(files) == 0 {
@@ -666,7 +683,7 @@ func (s *scan) editors() {
 	}
 	for _, app := range editorApps {
 		path := filepath.Join(base, app.dir, "User", "settings.json")
-		m := readSettings(path)
+		m := s.readSettings(path)
 		if m == nil {
 			continue
 		}
@@ -704,7 +721,7 @@ func (s *scan) devinConfigDir() string {
 // every shell command then runs without asking. Exec(<prefix>) rules allow only
 // that command and are not findings.
 func (s *scan) devinShellAllowed(scope, path, repo string) {
-	m := readSettings(path)
+	m := s.readSettings(path)
 	if m == nil {
 		return
 	}

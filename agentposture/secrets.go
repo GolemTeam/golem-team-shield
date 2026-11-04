@@ -57,7 +57,7 @@ func (s *scan) secretItems() []Item {
 			add(client, "config_plaintext_secret", sev, scope, path, block+"."+k, detail)
 		}
 	}
-	if claudeCodeInUse(s.env.Home) {
+	if s.claudeInUse() {
 		for _, f := range s.claudeSettingsFiles() {
 			if env, ok := lookup(f.m, "env").(map[string]any); ok {
 				plaintext("claude-code", f.scope, f.path, stringValues(env), "env")
@@ -67,7 +67,7 @@ func (s *scan) secretItems() []Item {
 	for _, p := range []struct{ client, path string }{
 		{"gemini-cli", filepath.Join(s.env.Home, ".gemini", ".env")},
 	} {
-		if b, _, ok := readCapped(p.path); ok {
+		if b, _, ok := s.readCapped(p.path); ok {
 			plaintext(p.client, "user", p.path, dotenv(b), ".env")
 		}
 	}

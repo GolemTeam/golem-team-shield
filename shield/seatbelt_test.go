@@ -27,6 +27,9 @@ func TestCleanWithNoGrantsDeniesCredentialsButLeavesWritesAndNetworkOpen(t *test
 		`(literal "/Users/dev/.zshrc")`,
 		`(literal "/Users/dev/.codex/hooks.json")`,
 		`(literal "/Users/dev/.gemini/settings.json")`,
+		`(subpath "/Users/dev/.hermes/plugins/golem")`,
+		`(literal "/Users/dev/.hermes/config.yaml")`,
+		`(literal "/Users/dev/.openclaw/openclaw.json")`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("ungranted profile lacks %s", want)

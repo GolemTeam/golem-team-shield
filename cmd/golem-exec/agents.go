@@ -43,9 +43,15 @@ func (s *setup) agentHooks() []agentHook {
 	if shield.GeminiInstalled(s.home) {
 		geminiFiles = []string{filepath.Join(s.home, ".gemini", "settings.json")}
 	}
+	cursor := shield.CursorHook{Command: s.hookCommand("cursor")}
+	var cursorFiles []string
+	if shield.CursorInstalled(s.home) {
+		cursorFiles = []string{filepath.Join(s.home, ".cursor", "hooks.json")}
+	}
 	return []agentHook{
 		{"Codex", codexFiles, codex.Wire, codex.Unwire},
 		{"Gemini CLI", geminiFiles, gemini.Wire, gemini.Unwire},
+		{"Cursor", cursorFiles, cursor.Wire, cursor.Unwire},
 	}
 }
 
@@ -94,8 +100,8 @@ func (s *setup) editJSON(path string, edit func(*jsonobject.Object) ([]string, e
 // client then runs the call unchanged; a command it reads but can't wrap is
 // refused by the answer itself.
 func (s *setup) hook(args []string) int {
-	if len(args) != 1 || (args[0] != "codex" && args[0] != "gemini-cli") {
-		fmt.Fprintln(s.stderr, "usage: golem-exec hook codex|gemini-cli")
+	if len(args) != 1 || (args[0] != "codex" && args[0] != "gemini-cli" && args[0] != "cursor") {
+		fmt.Fprintln(s.stderr, "usage: golem-exec hook codex|gemini-cli|cursor")
 		return 2
 	}
 	var in map[string]any
@@ -107,6 +113,10 @@ func (s *setup) hook(args []string) int {
 	case "codex":
 		if shim := shield.HookShim(s.home, s.loginShell); s.shimRuns(shim) {
 			out = shield.CodexRewrite(shim, in)
+		}
+	case "cursor":
+		if shim := shield.HookShim(s.home, s.loginShell); s.shimRuns(shim) {
+			out = shield.CursorRewrite(shim, in)
 		}
 	case "gemini-cli":
 		if shim := filepath.Join(shield.HookShimDir(s.home), "bash"); s.shimRuns(shim) {

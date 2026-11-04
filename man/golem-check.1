@@ -1,16 +1,27 @@
 .TH GOLEM-CHECK 1 2026-11-03 golem-team-shield "User Commands"
 .SH NAME
-golem-check \- report the AI coding agent settings that let agents act without asking
+golem-check \- grade how the AI coding agents on this machine are set up
 .SH SYNOPSIS
 .B golem-check
-.RB [ \-json ]
+.RB [ \-json " [" \-with\-score "] | " \-sarif " | " \-html ]
+.RB [ \-repo
+.IR dir ]
+.RB [ \-o
+.IR file ]
+.RB [ \-fail\-on
+.IR severity ]
 .br
 .B golem-check \-version
 .SH DESCRIPTION
 .B golem-check
-reads the settings of the AI coding agents on this machine and prints the ones
-that let an agent act without asking, worst first: permission prompts turned
-off, every command allowed, every folder trusted, and no sandbox.
+reads the settings of the AI coding agents on this machine, grades them out of
+100, scores each area, and prints what to fix, worst first.
+The areas are run modes (permission prompts off, every command allowed, every
+folder trusted), permissions (allow rules for any command, file, page or MCP
+tool), MCP servers (how each is started and reached), instructions and skills
+(text that tells the agent to hide things, send secrets out, or ignore its
+instructions), hooks, secrets written into settings, plugin sources, and
+protections (which agents run their commands in a sandbox or the Golem jail).
 .PP
 It reads Claude Code (including its managed settings and MDM profiles),
 Cursor, Codex, Gemini CLI, Devin, and the VS Code family of editors (VS Code,
@@ -18,13 +29,15 @@ VS Code Insiders, VSCodium, Cursor, Windsurf, Antigravity), and the settings of
 each repository Claude Code has opened.
 .PP
 It reads files and nothing else, and sends nothing anywhere.
-It reports a setting's name and value, never a file's contents.
+It never starts an MCP server, so it does not see the tools a server describes.
+It names a secret's file and setting, never the secret.
 .SH OPTIONS
 .TP
 .B \-json
 Print every finding, informational ones included, as JSON: a list of objects
 with
 .BR client ,
+.BR area ,
 .BR check ,
 .B severity
 .RB ( dangerous ,
@@ -38,11 +51,51 @@ or
 and
 .BR detail .
 .TP
+.B \-with\-score
+With
+.BR \-json ,
+print an object holding the grade and each area's score
+.RB ( score )
+beside the findings
+.RB ( items ).
+.TP
+.B \-sarif
+Print the findings as SARIF 2.1.0, for GitHub code scanning.
+.TP
+.B \-html
+Print the report as one self-contained HTML page, with no scripts and nothing
+fetched, to hand to a security team.
+It names no user or host.
+.TP
+.BI \-repo " dir"
+Check only the agent files the repository at
+.I dir
+carries, and nothing from the home directory: what a clone hands everyone who
+works in it.
+Locations are relative to
+.IR dir .
+.TP
+.BI \-o " file"
+Write the report to
+.I file
+instead of standard output.
+.TP
+.BI \-fail\-on " severity"
+Exit 3 when a finding is at least
+.I severity
+.RB ( suspicious
+or
+.BR dangerous );
+.B none
+(the default) never does.
+.TP
 .B \-version
 Print the version.
 .SH EXIT STATUS
 0 when the report was written, whatever it found; 1 when it could not be
-written; 2 for a usage error.
+written; 2 for a usage error; 3 when
+.B \-fail\-on
+found something at least that severe.
 .SH SEE ALSO
 .BR golem\-exec (1)
 .PP

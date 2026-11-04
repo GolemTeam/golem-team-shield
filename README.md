@@ -11,8 +11,8 @@ anything anywhere.
 
 | | What it does |
 |---|---|
-| `golem-exec` | Runs every shell command Claude Code starts inside a kernel jail: Seatbelt on macOS, Landlock and seccomp on Linux, a restricted token on Windows. |
-| `golem-check` | Reads your agents' settings and prints the ones that let them act without asking. |
+| `golem-exec` | Runs every shell command Claude Code, Codex, Gemini CLI and Cursor start inside a kernel jail: Seatbelt on macOS, Landlock and seccomp on Linux, a restricted token on Windows. |
+| `golem-check` | Grades how your agents are set up, from their run modes and permissions to their MCP servers, skills, hooks and stored secrets, and says what to fix. |
 
 ## What the jail stops
 
@@ -42,11 +42,27 @@ settings tighten it, as far as Claude Code's own sandbox goes or further:
 
 Lockdown takes the network away entirely (see [Settings](#settings)).
 
-It jails shell commands only. Claude Code's own Read, Write and fetch tools
-don't go through a shell, so they are not jailed. For now it works with Claude
-Code only: other agents have no setting that names the shell they run. Linux
-and Windows each have a few gaps of their own, listed under
+It jails shell commands only. An agent's own file and fetch tools don't go
+through a shell, so they are not jailed. Linux and Windows each have a few gaps
+of their own, listed under
 [what the jail does not cover](https://docs.golem.team/shield#what-the-jail-does-not-cover).
+
+### Which agents
+
+| Agent | How its commands reach the jail | Where |
+|---|---|---|
+| Claude Code | Its shell setting, `CLAUDE_CODE_SHELL`, names the shim | macOS, Linux, Windows |
+| Codex | Its `PreToolUse` hook rewrites each command to run through the shim. Codex asks you to approve the new hook once | macOS, Linux |
+| Gemini CLI | Its `BeforeTool` hook, the same way | macOS, Linux |
+| Cursor (the editor's agent and `cursor-agent`) | Its `preToolUse` hook, the same way. If the hook fails, the command is refused | macOS, Linux |
+
+The rewritten command is a plain `bash -c '…'` or `zsh -c '…'`, so the agent
+still asks you about the command it meant to run, and your allow and deny rules
+still match it. On Windows, Codex, Gemini CLI and Cursor run PowerShell, which
+the jail doesn't cover yet. On macOS, a command an agent runs inside its own
+sandbox (Codex's default, or Cursor's or Gemini CLI's when turned on) stays in
+that sandbox, because macOS can't put one sandbox inside another. On Linux the
+two stack.
 
 ## Install
 
@@ -110,20 +126,23 @@ golem-exec install
    turns off Claude Code's PowerShell tool, whose commands would not be jailed.
    If you set Claude Code's shell yourself, it leaves that alone and says how to
    change it.
-4. It tests the jail. A plain command must run, and a read of `~/.golem` must
+4. It adds its hook to Codex (`~/.codex/hooks.json`), Gemini CLI
+   (`~/.gemini/settings.json`) and Cursor (`~/.cursor/hooks.json`), each only
+   if that agent is installed, next to any hooks you already have.
+5. It tests the jail. A plain command must run, and a read of `~/.golem` must
    be denied.
 
 It refuses on a machine where the jail can't be built: Linux older than 5.13 or
-without Landlock enabled, or macOS inside another sandbox. Then restart Claude
-Code.
+without Landlock enabled, or macOS inside another sandbox. Then restart your
+agents.
 
 ```sh
-golem-exec status      # what is installed, and what commands get
+golem-exec status      # what is installed, each agent's coverage, and what commands get
 golem-exec test        # run the self-test again
-golem-exec uninstall   # put Claude Code's shell back (--purge also removes the settings)
+golem-exec uninstall   # put Claude Code's shell back and take the hooks out (--purge also removes the settings)
 ```
 
-Claude Code runs the copy in `~/.golem/bin`, not the one on your PATH. Homebrew
+Your agents run the copy in `~/.golem/bin`, not the one on your PATH. Homebrew
 updates that copy after each `brew upgrade`. Installed another way, run
 `golem-exec install --refresh` after upgrading: it replaces the installed shim
 and changes nothing else. `man golem-exec` and `man golem-check` describe every
@@ -172,21 +191,62 @@ tighter. `golem-exec status` shows what commands get.
 ## golem-check
 
 ```sh
-golem-check          # what is risky, worst first
-golem-check -json    # every finding, informational ones included
+golem-check                     # the grade, each area's score, and what to fix, worst first
+golem-check -json               # every finding, informational ones included (-with-score adds the grade)
+golem-check -html -o report.html   # one self-contained page to hand a security team
+golem-check -repo .             # only what this repository brings to anyone who clones it
+golem-check -repo . -sarif -o golem-check.sarif -fail-on suspicious   # for CI and GitHub code scanning
 ```
 
-It reads the settings of Claude Code (including managed settings and MDM
-profiles), Cursor, Codex, Gemini CLI, Devin, and the VS Code family of editors
-(VS Code, VS Code Insiders, VSCodium, Cursor, Windsurf, Antigravity). It also
-reads the settings of each repository Claude Code has opened. It reports:
+`-repo` reads the agent files a repository carries (`.claude/`, `.mcp.json`,
+`.cursor/`, `CLAUDE.md`, `AGENTS.md`, skills and the rest) and nothing from your
+home directory. `-sarif` writes SARIF 2.1.0 for GitHub code scanning, and
+`-fail-on suspicious` or `-fail-on dangerous` exits 3 when a finding is at
+least that severe, so a build can stop on it.
 
-- permission prompts turned off;
-- every command allowed;
-- every folder trusted;
-- no sandbox.
+### In GitHub Actions
 
-It reports a setting's name and value, never a file's contents.
+```yaml
+permissions:
+  contents: read
+  security-events: write   # to upload the findings to code scanning
+steps:
+  - uses: actions/checkout@v4
+  - uses: GolemTeam/golem-team-shield@v0.2.0
+    with:
+      fail-on: dangerous     # or suspicious, or none
+```
+
+The action downloads the `golem-check` release it is pinned to (v0.2.0 or later),
+checks it against the release's `checksums.txt`, prints the report in the job
+log, uploads the SARIF report to code scanning (`upload-sarif: false` skips
+that), sets the `grade` output, and fails the job on a finding at least as severe
+as `fail-on`. It reads only the checked-out repository, follows no link out of
+it, and needs no token beyond the job's own.
+
+It grades the AI coding agents on your machine out of 100, and scores each
+area:
+
+| Area | What it looks for |
+|---|---|
+| Run modes | Permission prompts turned off, every command allowed, every folder trusted |
+| Permissions | Allow rules that let an agent run any command, write any file, fetch any page or call any MCP tool, and every cloned repository's MCP servers starting on their own |
+| MCP servers | Servers started by piping a download into a shell, reached over plain HTTP, run from an unpinned package or image, given your whole disk, or run in a privileged container |
+| Instructions and skills | Skills, rules files and agent instructions that tell the agent to hide things from you, send secrets somewhere, or ignore its instructions |
+| Hooks | Hooks that send data out, run a script other users can change or one that doesn't exist, or hide their own failures |
+| Secrets | Keys and tokens written into agent settings and MCP configs, especially in a repository, and agents' sign-in files other users can read |
+| Plugin sources | Plugin marketplaces a cloned repository adds, marketplaces from outside the agent's vendor, and sources fetched over plain HTTP |
+| Protections | Which agents run their commands in a sandbox or the Golem jail |
+
+It reads Claude Code (including managed settings and MDM profiles), Cursor,
+Codex, Gemini CLI, Devin, and the VS Code family of editors (VS Code, VS Code
+Insiders, VSCodium, Cursor, Windsurf, Antigravity), and the settings of each
+repository Claude Code has opened.
+
+It reads files and nothing else. It never starts an MCP server, so it can't
+see the tool descriptions a server sends; the Golem agent checks those as your
+agents receive them. It names a secret's file and setting, never the secret
+itself.
 
 ## With Golem
 

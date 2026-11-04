@@ -23,7 +23,7 @@ import (
 
 // RulesVersion names the rule pack. Findings carry it, so a stored finding
 // says which rules it was made against, and a new version re-scans.
-const RulesVersion = "2026.10.7"
+const RulesVersion = "2026.11.2"
 
 const (
 	SeverityLow    = "low"
@@ -82,6 +82,52 @@ type textRule struct {
 	// toolsOnly limits a rule to what an MCP server tells the agent, where
 	// talking about other tools is a sign of shadowing rather than a guide.
 	toolsOnly bool
+	// directed limits a rule to a clause that no "never" or "do not" governs
+	// and that names where the thing goes: "never send any credentials" is a
+	// safeguard, and "send credentials" with nowhere to send them is a sentence
+	// about them.
+	directed bool
+	// advice skips "never tell the user to run it": what to say to the user,
+	// not what to keep from them. "Don't tell the user how" is concealment.
+	advice bool
+}
+
+var (
+	clauseEndRE = regexp.MustCompile(`[.;!?](\s|$)|\n`)
+	// governsRE is a negator that reaches the match: a few words before it with
+	// no comma or colon between, so "never submit a form or send" is governed
+	// and "without asking, send" is not.
+	governsRE = regexp.MustCompile(`(?i)\b(never|not|no|don't|doesn't|do not|without)\s+([^\s,:()]+\s+){0,5}$`)
+	notNegRE  = regexp.MustCompile(`(?i)\b(never|don't|do not)\s+(forget|fail|hesitate)\b`)
+	destRE    = regexp.MustCompile("(?i)https?://|[\\w.+-]+@[\\w-]+\\.[a-z]{2,}|\\b(to|into|as|via|onto)\\s+(the\\s+|a\\s+|an\\s+|its\\s+|this\\s+)?[`'\"\\w<]" +
+		"|\\bin\\s+(the\\s+|a\\s+|an\\s+|your\\s+|its\\s+)?[`'\"]?[\\w-]+[`'\"]?\\s+(parameter|argument|field|query|body|request|message|reply|response|comment|notes?)s?\\b")
+)
+
+// clause is the part of text a match sits in: from the last clause boundary
+// before start to the first after end.
+func clause(text string, start, end int) (before, after string) {
+	from := 0
+	for _, m := range clauseEndRE.FindAllStringIndex(text[:start], -1) {
+		from = m[1]
+	}
+	to := len(text)
+	if m := clauseEndRE.FindStringIndex(text[end:]); m != nil {
+		to = end + m[0]
+	}
+	return text[from:start], text[start:to]
+}
+
+func adviceFollows(rest string) bool {
+	next := strings.Fields(strings.ToLower(rest[:min(len(rest), 40)]))
+	return len(next) > 0 && next[0] == "to"
+}
+
+func directedMatch(text string, start, end int) bool {
+	before, rest := clause(text, start, end)
+	if m := governsRE.FindString(before); m != "" && !notNegRE.MatchString(m) {
+		return false
+	}
+	return destRE.MatchString(rest)
 }
 
 // crossServerRule is a server's text naming another server's tool by its
@@ -106,13 +152,15 @@ var textRules = []textRule{
 		re: regexp.MustCompile(`(?i)\b(ignore|disregard|forget|override)\b[^.\n]{0,40}\b(previous|prior|above|earlier|all|any|other|system)\b[^.\n]{0,20}\b(instructions?|rules|prompts?|guidelines|directions)\b`)},
 	{Rule: Rule{ID: "gd-conceal", Title: "Tells the agent to keep something from the user", Category: "concealment",
 		Severity: SeverityHigh, Confidence: ConfidenceMedium, Attack: []string{"AML.T0051.001"}, Source: "invariant tool poisoning, cisco/yara/coercive_injection"},
-		re: regexp.MustCompile(`(?i)\b(do not|don't|never|without)\b[^.\n]{0,30}\b(tell|telling|inform|informing|mention|mentioning|reveal|revealing|notify|notifying|alert|alerting)\b[^.\n]{0,60}\b(the )?(user|human|operator)\b`)},
+		re:     regexp.MustCompile(`(?i)\b(do not|don't|never|without)\s+([\w'-]+\s+){0,3}?(tell|telling|inform|informing|mention|mentioning|reveal|revealing|notify|notifying|alert|alerting)\b[^.;\n]{0,60}\b(the )?(user|human|operator)\b`),
+		advice: true},
 	{Rule: Rule{ID: "gd-fake-role-tags", Title: "Tags that pose as system or priority text", Category: "prompt_injection",
 		Severity: SeverityMedium, Confidence: ConfidenceMedium, Attack: []string{"AML.T0051.001"}, Source: "invariant tool poisoning"},
 		re: regexp.MustCompile(`(?i)<\s*/?\s*(important|system|instructions?|admin|assistant|sudo)\s*>|\[\s*(system|admin|sudo)\s*\]`)},
 	{Rule: Rule{ID: "gd-exfil-instruction", Title: "Tells the agent to send secrets or the conversation somewhere", Category: "exfiltration",
 		Severity: SeverityHigh, Confidence: ConfidenceMedium, Attack: []string{"AML.T0024", "T1048"}, Source: "skillspector/P3, E4; cisco/yara/data_exfiltration"},
-		re: regexp.MustCompile(`(?i)\b(send|post|upload|forward|transmit|exfiltrate|pass|attach|include)\b[^.\n]{0,80}` + exfilObjects + `|` + exfilObjects + "`?" + `[^.\n]{0,80}\b(send|post|upload|forward|transmit|exfiltrate|pass|attach|include)\b`)},
+		re:       regexp.MustCompile(`(?i)\b(send|post|upload|forward|transmit|exfiltrate|pass|attach|include)\b[^.\n]{0,80}` + exfilObjects + `|` + exfilObjects + "`?" + `[^.\n]{0,80}\b(send|post|upload|forward|transmit|exfiltrate|pass|attach|include)\b`),
+		directed: true},
 	{Rule: Rule{ID: "gd-credential-paths", Title: "Names a credential file", Category: "credential_access",
 		Severity: SeverityMedium, Confidence: ConfidenceMedium, Attack: []string{"T1552.001"}, Source: "skillspector/PE3; cisco/yara/credential_harvesting"},
 		re: regexp.MustCompile(`(?i)(~|\$HOME)/\.(ssh|aws|gnupg|kube|docker/config\.json|netrc|npmrc|pypirc|git-credentials)\b|\bid_(rsa|ed25519|ecdsa)\b|\.aws/credentials\b|Library/Keychains|login\.keychain`)},
@@ -371,6 +419,9 @@ func (sc *scanner) text(p definition.Part, t text, server bool) {
 			continue
 		}
 		for _, m := range r.re.FindAllStringIndex(t.value, maxPerRulePart) {
+			if r.directed && !directedMatch(t.value, m[0], m[1]) || r.advice && adviceFollows(t.value[m[1]:]) {
+				continue
+			}
 			sc.add(r.Rule, p, t.field, t.value, m[0], m[1])
 		}
 	}

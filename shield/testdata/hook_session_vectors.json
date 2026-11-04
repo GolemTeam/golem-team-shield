@@ -1,0 +1,17 @@
+[
+  {
+    "agent": "openclaw",
+    "cwd": "/work/repo",
+    "file": "5ab3de7c90579aa0b3590be6"
+  },
+  {
+    "agent": "openclaw",
+    "cwd": "/Users/a b/src/x",
+    "file": "b9c7d3f664277c43a1614ba9"
+  },
+  {
+    "agent": "gemini-cli",
+    "cwd": "/work/repo",
+    "file": "c7139bf3e446d08dacda98e1"
+  }
+]

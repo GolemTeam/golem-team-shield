@@ -25,6 +25,19 @@ arguments, inside a kernel jail: Seatbelt on macOS, Landlock and seccomp on
 Linux, a restricted token on Windows.
 Everything the command starts inherits the jail.
 .PP
+Codex, Gemini CLI and Cursor have no setting that names their shell, so on
+macOS and Linux
+.B golem-exec
+is their pre-tool hook instead
+.RB ( "golem-exec hook" " " \fIagent\fR ),
+and rewrites each shell command to
+.IB ~/.golem/bin/hook/bash " \-c '" command '
+(or
+.BR zsh ),
+which the agent then asks about and runs as usual.
+Cursor refuses the command if the hook fails; Codex and Gemini CLI run it
+unjailed.
+.PP
 Run by its own name it manages that setup.
 Run under a shell's name
 .RB ( golem\-zsh ,
@@ -46,8 +59,8 @@ or the agents' settings and hooks; and loses secret-shaped environment
 variables.
 It keeps the network, cloud credentials, the SSH agent and the Docker socket.
 .PP
-It jails shell commands only: Claude Code's own Read, Write and fetch tools do
-not run through a shell.
+It jails shell commands only: an agent's own file and fetch tools do not run
+through a shell.
 .SH COMMANDS
 .TP
 .B install
@@ -61,11 +74,18 @@ in
 .I ~/.claude/settings.json
 (on Windows,
 .B CLAUDE_CODE_GIT_BASH_PATH
-and the PowerShell tool turned off), and run the self-test.
+and the PowerShell tool turned off), add its hook to Codex
+.RI ( ~/.codex/hooks.json ),
+Gemini CLI
+.RI ( ~/.gemini/settings.json )
+and Cursor
+.RI ( ~/.cursor/hooks.json )
+where each is installed (not on Windows), and run the self-test.
+Codex asks once to approve the new hook.
 A shell you set in Claude Code yourself is left alone.
 It refuses where the jail cannot be built, and does nothing where the Golem
 agent manages the shield.
-Restart Claude Code afterwards.
+Restart your agents afterwards.
 .TP
 .B install \-\-strict
 As
@@ -78,13 +98,14 @@ to the project
 Replace an installed shim with this binary and change nothing else.
 It does nothing when no shim is installed or the Golem agent manages the
 shield.
-Package managers run it after an upgrade, because Claude Code runs the copy in
+Package managers run it after an upgrade, because your agents run the copy in
 .IR ~/.golem/bin ,
 not the one on your PATH.
 .TP
 .B status
-Show the installed shim, Claude Code's shell setting, whether the jail can be
-built here, the settings file, and the policy commands get.
+Show the installed shim, Claude Code's shell setting, whether each agent's
+commands are jailed, whether the jail can be built here, the settings file, and
+the policy commands get.
 .TP
 .B test
 Run a plain command through the shim, which must succeed, and a read of
@@ -92,7 +113,8 @@ Run a plain command through the shim, which must succeed, and a read of
 which the jail must deny.
 .TP
 .B uninstall
-Put Claude Code's shell back and remove the shim.
+Put Claude Code's shell back, take the hooks out of the other agents, and
+remove the shim.
 .B \-\-purge
 also removes the settings and the cached policies.
 .TP
@@ -186,6 +208,9 @@ The settings.
 .TP
 .I ~/.claude/settings.json
 Where Claude Code is pointed at the shim.
+.TP
+.IR ~/.codex/hooks.json ", " ~/.gemini/settings.json ", " ~/.cursor/hooks.json
+Where the hook is registered with Codex, Gemini CLI and Cursor.
 .SH ENVIRONMENT
 .TP
 .B GOLEM_WITNESS_URL

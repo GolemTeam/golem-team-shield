@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"time"
 
 	"github.com/GolemTeam/golem-team-shield/agentposture"
 	"github.com/GolemTeam/golem-team-shield/shield"
@@ -26,6 +27,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	asJSON := fs.Bool("json", false, "print every finding, informational ones included, as JSON")
 	withScore := fs.Bool("with-score", false, "with -json, print the grade and area scores beside the findings")
+	asSARIF := fs.Bool("sarif", false, "print the findings as SARIF 2.1.0, for GitHub code scanning")
+	asHTML := fs.Bool("html", false, "print the report as one self-contained HTML page, to hand a security team")
+	repo := fs.String("repo", "", "check only the agent files in this repository, not this machine")
+	outPath := fs.String("o", "", "write the report to this file instead of standard output")
+	failOn := fs.String("fail-on", "none", "exit 3 if a finding is at least this severe: suspicious, dangerous or none")
 	showVersion := fs.Bool("version", false, "print the version")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -34,37 +40,89 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "golem-check "+version)
 		return 0
 	}
-	env := agentposture.DefaultEnv()
-	res := agentposture.ScanAll(env)
-	res.Add(shellJailItems(shield.CoverageOf(shield.CoverageEnv{Home: env.Home, GOOS: env.GOOS, LoginShell: os.Getenv("SHELL"), CodexHomes: env.CodexHomes}))...)
-	if *asJSON {
+	threshold, ok := map[string]int{"none": -1, agentposture.Suspicious: 1, agentposture.Dangerous: 0}[*failOn]
+	if !ok {
+		fmt.Fprintln(stderr, "golem-check: -fail-on takes suspicious, dangerous or none")
+		return 2
+	}
+	var res agentposture.Result
+	if *repo != "" {
+		if info, err := os.Stat(*repo); err != nil || !info.IsDir() {
+			fmt.Fprintln(stderr, "golem-check: -repo needs a directory")
+			return 2
+		}
+		res = agentposture.ScanRepo(*repo)
+	} else {
+		env := agentposture.DefaultEnv()
+		res = agentposture.ScanAll(env)
+		res.Add(shellJailItems(shield.CoverageOf(shield.CoverageEnv{Home: env.Home, GOOS: env.GOOS, LoginShell: os.Getenv("SHELL"), CodexHomes: env.CodexHomes, OpenClawDir: os.Getenv("OPENCLAW_STATE_DIR")}))...)
+	}
+	out := stdout
+	if *outPath != "" {
+		f, err := os.Create(*outPath)
+		if err != nil {
+			fmt.Fprintln(stderr, "golem-check: could not create the report file")
+			return 1
+		}
+		defer f.Close()
+		out = f
+	}
+	if err := write(out, res, format{*asJSON, *withScore, *asSARIF, *asHTML}, *repo != ""); err != nil {
+		fmt.Fprintln(stderr, "golem-check: could not write the report")
+		return 1
+	}
+	if threshold >= 0 && failing(res, threshold) {
+		return 3
+	}
+	return 0
+}
+
+type format struct{ json, withScore, sarif, html bool }
+
+func write(out io.Writer, res agentposture.Result, f format, repo bool) error {
+	switch {
+	case f.sarif:
+		return agentposture.WriteSARIF(out, res, version)
+	case f.html:
+		return agentposture.WriteHTML(out, res, agentposture.HTMLMeta{Version: version, GOOS: runtime.GOOS, When: time.Now()})
+	case f.json:
 		items := res.Items
 		if items == nil {
 			items = []agentposture.Item{}
 		}
 		var doc any = items
-		if *withScore {
+		if f.withScore {
 			doc = struct {
 				Score agentposture.Report `json:"score"`
 				Items []agentposture.Item `json:"items"`
 			}{agentposture.Score(res), items}
 		}
-		enc := json.NewEncoder(stdout)
+		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(doc); err != nil {
-			fmt.Fprintln(stderr, "golem-check: could not write the report")
-			return 1
-		}
-		return 0
+		return enc.Encode(doc)
 	}
-	agentposture.WriteReport(stdout, res)
-	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, agentposture.NotRead)
-	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, "Put every shell command your agents run in a kernel jail, and run untrusted repos,")
-	fmt.Fprintln(stdout, "pages and files in a sandbox, free and with no account:")
-	fmt.Fprintln(stdout, "  "+installCommand(runtime.GOOS))
-	return 0
+	agentposture.WriteReport(out, res)
+	if repo {
+		return nil
+	}
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, agentposture.NotRead)
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Put every shell command your agents run in a kernel jail, and run untrusted repos,")
+	fmt.Fprintln(out, "pages and files in a sandbox, free and with no account:")
+	_, err := fmt.Fprintln(out, "  "+installCommand(runtime.GOOS))
+	return err
+}
+
+// failing reports a finding at or above threshold, by agentposture.Rank.
+// Protections are credit, not findings.
+func failing(res agentposture.Result, threshold int) bool {
+	for _, it := range res.Items {
+		if it.Area != agentposture.AreaProtections && agentposture.Rank(it.Severity) <= threshold {
+			return true
+		}
+	}
+	return false
 }
 
 // installCommand installs the Golem agent, which with no key runs on this

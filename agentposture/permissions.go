@@ -26,7 +26,7 @@ func (s *scan) permissionItems() []Item {
 			Location: s.display(path), Setting: setting, Value: value, Subject: subject, Detail: detail})
 	}
 	home := s.env.Home
-	if claudeCodeInUse(home) {
+	if s.claudeInUse() {
 		for _, f := range s.claudeSettingsFiles() {
 			once := map[string]bool{}
 			for _, raw := range lookupStrings(f.m, "permissions", "allow") {
@@ -65,15 +65,15 @@ func (s *scan) permissionItems() []Item {
 	}
 
 	var gemini []settingsFile
-	if m := readSettings(s.env.GeminiSystem); m != nil {
+	if m := s.readSettings(s.env.GeminiSystem); m != nil {
 		gemini = append(gemini, settingsFile{"managed", s.env.GeminiSystem, m})
 	}
-	if p := filepath.Join(home, ".gemini", "settings.json"); readSettings(p) != nil {
-		gemini = append(gemini, settingsFile{"user", p, readSettings(p)})
+	if p := filepath.Join(home, ".gemini", "settings.json"); s.readSettings(p) != nil {
+		gemini = append(gemini, settingsFile{"user", p, s.readSettings(p)})
 	}
 	for _, root := range s.projectRoots() {
-		if p := filepath.Join(root, ".gemini", "settings.json"); readSettings(p) != nil {
-			gemini = append(gemini, settingsFile{"project", p, readSettings(p)})
+		if p := filepath.Join(root, ".gemini", "settings.json"); s.readSettings(p) != nil {
+			gemini = append(gemini, settingsFile{"project", p, s.readSettings(p)})
 		}
 	}
 	for _, f := range gemini {
@@ -97,7 +97,7 @@ func (s *scan) permissionItems() []Item {
 	}
 
 	cursor := filepath.Join(home, ".cursor", "cli-config.json")
-	if m := readSettings(cursor); m != nil {
+	if m := s.readSettings(cursor); m != nil {
 		for _, rule := range lookupStrings(m, "permissions", "allow") {
 			if cursorWriteRE.MatchString(strings.ReplaceAll(rule, " ", "")) {
 				add("cursor", "write_allowed", Suspicious, "user", cursor, "permissions.allow", rule, "",

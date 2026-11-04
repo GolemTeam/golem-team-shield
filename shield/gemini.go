@@ -63,8 +63,7 @@ func IsGeminiJailHook(command string) bool {
 	if strings.Contains(command, " gemini-hook BeforeTool") {
 		return true
 	}
-	f := strings.Fields(command)
-	return len(f) == 3 && strings.TrimSuffix(filepath.Base(f[0]), ".exe") == "golem-exec" && f[1] == "hook" && f[2] == "gemini-cli"
+	return isGolemExecHook(command, "gemini-cli")
 }
 
 // GeminiHook is golem-exec's own BeforeTool entry in ~/.gemini/settings.json.

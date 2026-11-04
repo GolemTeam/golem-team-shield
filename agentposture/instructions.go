@@ -48,9 +48,9 @@ func ruleSeverity(severity, confidence string) string {
 
 func (s *scan) instructionItems(skip map[string]bool) []Item {
 	var out []Item
+	seen := map[string]bool{}
 	for _, src := range s.definitionSources(skip) {
 		s.read[AreaInstructions] = true
-		seen := map[string]bool{}
 		for _, f := range defscan.Scan(definition.Build(src.assetType, src.key, definition.SourceConfigScan, src.parts)) {
 			area := AreaInstructions
 			if strings.HasSuffix(f.PartName, "hooks.json") {
@@ -83,7 +83,7 @@ func (s *scan) definitionSources(skip map[string]bool) []definitionSource {
 		if skip[path] {
 			return
 		}
-		b, _, ok := readCapped(path)
+		b, _, ok := s.readCapped(path)
 		if !ok || len(b) == 0 {
 			return
 		}
@@ -102,11 +102,11 @@ func (s *scan) definitionSources(skip map[string]bool) []definitionSource {
 	}
 	skills := func(client, scope, root string, depth int) {
 		for _, dir := range NestedSkillDirs(root, depth) {
-			if skip[filepath.Join(dir, "SKILL.md")] {
+			if skip[filepath.Join(dir, "SKILL.md")] || s.env.Repo != "" && !within(s.env.Repo, dir) {
 				continue
 			}
 			name := filepath.Base(dir)
-			if b, _, ok := readCapped(filepath.Join(dir, "SKILL.md")); ok {
+			if b, _, ok := s.readCapped(filepath.Join(dir, "SKILL.md")); ok {
 				if n := FrontmatterName(b); n != "" {
 					name = n
 				}
@@ -150,7 +150,7 @@ func (s *scan) definitionSources(skip map[string]bool) []definitionSource {
 
 	for _, root := range InstalledClaudePlugins(home) {
 		name := filepath.Base(root)
-		if b, _, ok := readCapped(filepath.Join(root, ".claude-plugin", "plugin.json")); ok {
+		if b, _, ok := s.readCapped(filepath.Join(root, ".claude-plugin", "plugin.json")); ok {
 			var m struct {
 				Name string `json:"name"`
 			}

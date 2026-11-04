@@ -75,7 +75,7 @@ func parseRegistrySettings(raw string) map[string]any {
 func (s *scan) claudeAdminSources() []adminSource {
 	var server, mdm, files adminSource
 	remote := filepath.Join(s.env.Home, ".claude", "remote-settings.json")
-	if m := readSettings(remote); m != nil {
+	if m := s.readSettings(remote); m != nil {
 		server = append(server, settingsFile{"managed", remote, m})
 	}
 	for _, p := range s.env.ManagedPrefs {
@@ -89,13 +89,13 @@ func (s *scan) claudeAdminSources() []adminSource {
 		}
 	}
 	if s.env.ManagedDir != "" {
-		if m := readSettings(filepath.Join(s.env.ManagedDir, "managed-settings.json")); m != nil {
+		if m := s.readSettings(filepath.Join(s.env.ManagedDir, "managed-settings.json")); m != nil {
 			files = append(files, settingsFile{"managed", filepath.Join(s.env.ManagedDir, "managed-settings.json"), m})
 		}
 		drop, _ := filepath.Glob(filepath.Join(s.env.ManagedDir, "managed-settings.d", "*.json"))
 		sort.Strings(drop)
 		for _, p := range drop {
-			if m := readSettings(p); m != nil {
+			if m := s.readSettings(p); m != nil {
 				files = append(files, settingsFile{"managed", p, m})
 			}
 		}

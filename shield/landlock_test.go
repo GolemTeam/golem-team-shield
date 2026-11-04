@@ -44,7 +44,7 @@ func TestLandlockCleanTakesCredentialsAndPersistenceOnly(t *testing.T) {
 			t.Errorf("%s isn't readable", p)
 		}
 	}
-	for _, p := range []string{".zshrc", ".config/git/config", ".claude/settings.json", ".ssh/config", ".codex/hooks.json", ".codex/config.toml", ".gemini/settings.json"} {
+	for _, p := range []string{".zshrc", ".config/git/config", ".claude/settings.json", ".ssh/config", ".codex/hooks.json", ".codex/config.toml", ".gemini/settings.json", ".hermes/plugins/golem/__init__.py", ".hermes/config.yaml", ".openclaw/extensions/golem/index.js", ".openclaw/openclaw.json"} {
 		if access(j, h(p))&llWriteFile != 0 {
 			t.Errorf("%s is writable", p)
 		}

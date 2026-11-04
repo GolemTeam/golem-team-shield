@@ -49,6 +49,8 @@ type CoverageEnv struct {
 	LoginShell string
 	// CodexHomes overrides CodexHomes(Home).
 	CodexHomes []string
+	// OpenClawDir is OpenClaw's $OPENCLAW_STATE_DIR; "" means ~/.openclaw.
+	OpenClawDir string
 }
 
 // IsShim reports whether path is one of the shim's names under home.
@@ -109,7 +111,11 @@ func CoverageOf(env CoverageEnv) []AgentCoverage {
 		env.ShimReady = ReadyShim(env.GOOS)
 	}
 	var out []AgentCoverage
-	for _, read := range []func(CoverageEnv) (AgentCoverage, bool){claudeCoverage, codexCoverage, geminiCoverage} {
+	reads := []func(CoverageEnv) (AgentCoverage, bool){claudeCoverage, codexCoverage, geminiCoverage, cursorCoverage}
+	for _, a := range pluginAgents {
+		reads = append(reads, pluginCoverage(a))
+	}
+	for _, read := range reads {
 		if c, ok := read(env); ok {
 			out = append(out, c)
 		}

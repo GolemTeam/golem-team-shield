@@ -15,9 +15,14 @@ const NotRead = "Not read: MCP tool descriptions. This check never starts an MCP
 // each agent. What to do next is the caller's to say.
 func WriteReport(w io.Writer, res Result) {
 	rep := Score(res)
-	if rep.Grade == "" {
+	switch {
+	case rep.Grade == "" && res.Repo != "":
+		fmt.Fprintf(w, "No agent files found in %s.\n", res.Repo)
+	case rep.Grade == "":
 		fmt.Fprintln(w, "No AI coding agents found on this machine.")
-	} else {
+	case res.Repo != "":
+		fmt.Fprintf(w, "Agent files in %s: grade %s (%d of 100)\n", res.Repo, rep.Grade, rep.Score)
+	default:
 		fmt.Fprintf(w, "Your AI agents on this machine: grade %s (%d of 100)\n", rep.Grade, rep.Score)
 	}
 	fmt.Fprintln(w)
@@ -48,7 +53,7 @@ func WriteReport(w io.Writer, res Result) {
 	if n := counts[Info]; n > 0 {
 		fmt.Fprintf(w, "  (%d more for information only: --json lists them)\n", n)
 	}
-	if len(res.Agents) > 0 {
+	if len(res.Agents) > 0 && res.Repo == "" {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "Protections")
 		writeProtections(w, res.Agents, protections)
@@ -83,44 +88,50 @@ func trimFloat(f float64) string {
 
 func writeProtections(w io.Writer, agents []string, items []Item) {
 	for _, client := range agents {
-		var best *Item
-		jailSeen := false
-		for i := range items {
-			it := &items[i]
-			if it.Client != client {
-				continue
-			}
-			jailSeen = jailSeen || it.Check == "shell_jail"
-			if best == nil || protectionCover(*it) > protectionCover(*best) {
-				best = it
-			}
+		fmt.Fprintf(w, "  %-12s %s\n", client, protectionLine(client, items))
+	}
+}
+
+// protectionLine says what covers an agent's shell, the strongest first, or
+// every way nothing does.
+func protectionLine(client string, items []Item) string {
+	var best *Item
+	jailSeen := false
+	for i := range items {
+		it := &items[i]
+		if it.Client != client {
+			continue
 		}
-		detail := "no sandbox found"
-		if best != nil && strings.TrimSpace(best.Detail) != "" {
-			detail = best.Detail
+		jailSeen = jailSeen || it.Check == "shell_jail"
+		if best == nil || protectionCover(*it) > protectionCover(*best) {
+			best = it
 		}
-		// With nothing covering the agent, say every way it isn't: the
-		// sandbox first, then the jail.
-		if best != nil && protectionCover(*best) == 0 {
-			var said []string
-			for _, jail := range []bool{false, true} {
-				for _, it := range items {
-					if it.Client == client && (it.Check == "shell_jail") == jail && strings.TrimSpace(it.Detail) != "" {
-						said = append(said, it.Detail)
-					}
+	}
+	detail := "no sandbox found"
+	if best != nil && strings.TrimSpace(best.Detail) != "" {
+		detail = best.Detail
+	}
+	// With nothing covering the agent, say every way it isn't: the
+	// sandbox first, then the jail.
+	if best != nil && protectionCover(*best) == 0 {
+		var said []string
+		for _, jail := range []bool{false, true} {
+			for _, it := range items {
+				if it.Client == client && (it.Check == "shell_jail") == jail && strings.TrimSpace(it.Detail) != "" {
+					said = append(said, it.Detail)
 				}
 			}
-			if len(said) > 0 {
-				detail = strings.Join(said, "; ")
-			}
 		}
-		// Without a shell_jail item the jail was not looked for, which is not
-		// the same as its being absent.
-		if !jailSeen && (best == nil || protectionCover(*best) == 0) {
-			detail += "; this check cannot see a shell jail yet"
+		if len(said) > 0 {
+			detail = strings.Join(said, "; ")
 		}
-		fmt.Fprintf(w, "  %-12s %s\n", client, detail)
 	}
+	// Without a shell_jail item the jail was not looked for, which is not
+	// the same as its being absent.
+	if !jailSeen && (best == nil || protectionCover(*best) == 0) {
+		detail += "; this check cannot see a shell jail yet"
+	}
+	return detail
 }
 
 func writeItem(w io.Writer, it Item) {

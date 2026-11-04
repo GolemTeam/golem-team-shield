@@ -23,7 +23,7 @@ import (
 
 const cliUsage = `usage: golem-exec <command>
 
-  install [--strict]   jail the shell commands Claude Code, Codex and Gemini CLI run here
+  install [--strict]   jail the shell commands Claude Code, Codex, Gemini CLI and Cursor run
   install --refresh    update an installed shim to this binary, and nothing else
   status               show what is installed and the policy commands get
   test                 check that the jail blocks what it should

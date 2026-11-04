@@ -156,11 +156,11 @@ func TestCodexCoverage(t *testing.T) {
 }
 
 func TestHookShimFollowsTheLoginShell(t *testing.T) {
-	if got := HookShim("/h", "/bin/zsh"); got != "/h/.golem/bin/hook/zsh" {
+	if got := HookShim("/h", "/bin/zsh"); got != filepath.Join("/h", ".golem", "bin", "hook", "zsh") {
 		t.Error(got)
 	}
 	for _, sh := range []string{"/bin/bash", "/usr/bin/fish", ""} {
-		if got := HookShim("/h", sh); got != "/h/.golem/bin/hook/bash" {
+		if got := HookShim("/h", sh); got != filepath.Join("/h", ".golem", "bin", "hook", "bash") {
 			t.Errorf("%q: %s", sh, got)
 		}
 	}

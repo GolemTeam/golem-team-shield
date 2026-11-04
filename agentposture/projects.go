@@ -1,7 +1,9 @@
 package agentposture
 
 import (
+	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -12,27 +14,47 @@ import (
 // Only Claude Code lists the repos it has opened; Env.Projects adds the ones a
 // caller learned some other way.
 
+// projectRoots leaves out the home directory, whose .claude/settings.json is
+// the user's own and not a repository's, and a second path to a directory
+// already listed, as a case-insensitive disk gives ~/Code and ~/code.
 func (s *scan) projectRoots() []string {
+	if s.roots != nil {
+		return s.roots
+	}
 	seen := map[string]bool{}
 	var out []string
+	var infos []os.FileInfo
+	home, _ := os.Stat(s.env.Home)
 	for _, p := range append(ClaudeProjects(s.env.Home), s.env.Projects...) {
-		if p != "" && filepath.IsAbs(p) && !seen[p] {
-			seen[p] = true
-			out = append(out, p)
+		if p == "" || !filepath.IsAbs(p) || seen[p] || filepath.Clean(p) == filepath.Clean(s.env.Home) {
+			continue
 		}
+		seen[p] = true
+		info, err := os.Stat(p)
+		if err == nil && (home != nil && os.SameFile(info, home) || slices.ContainsFunc(infos, func(o os.FileInfo) bool { return os.SameFile(o, info) })) {
+			continue
+		}
+		if err == nil {
+			infos = append(infos, info)
+		}
+		out = append(out, p)
 	}
 	sort.Strings(out)
 	if len(out) > MaxProjects {
 		out = out[:MaxProjects]
 	}
-	return out
+	s.roots = out
+	if s.roots == nil {
+		s.roots = []string{}
+	}
+	return s.roots
 }
 
 func (s *scan) projectSettings() {
 	for _, root := range s.projectRoots() {
 		repo := filepath.Base(root)
 		cursor := filepath.Join(root, ".cursor", "cli.json")
-		if m := readSettings(cursor); m != nil {
+		if m := s.readSettings(cursor); m != nil {
 			switch lookupString(m, "approvalMode") {
 			case "unrestricted":
 				s.add("cursor", "run_everything", Dangerous, "project", cursor, "approvalMode", "unrestricted",
@@ -43,7 +65,7 @@ func (s *scan) projectSettings() {
 			}
 		}
 		gemini := filepath.Join(root, ".gemini", "settings.json")
-		if m := readSettings(gemini); m != nil {
+		if m := s.readSettings(gemini); m != nil {
 			for _, t := range lookupStrings(m, "tools", "allowed") {
 				if strings.TrimSpace(t) == "run_shell_command" {
 					s.add("gemini-cli", "shell_allowed", Suspicious, "project", gemini, "tools.allowed", t,
@@ -57,7 +79,7 @@ func (s *scan) projectSettings() {
 			}
 		}
 		codex := filepath.Join(root, ".codex", "config.toml")
-		if doc := readCodexTOML(codex); doc != nil {
+		if doc := s.readCodexTOML(codex); doc != nil {
 			s.codexTable("codex", "project", codex, "", doc[""])
 		}
 	}

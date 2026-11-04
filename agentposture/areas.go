@@ -1,5 +1,11 @@
 package agentposture
 
+import (
+	"regexp"
+	"runtime"
+	"strings"
+)
+
 // Areas group the checks for the report (docs/design-golem-check-report.md).
 // An Item a caller adds with none is in AreaRunModes.
 const (
@@ -63,6 +69,8 @@ type Result struct {
 	Items  []Item
 	Agents []string
 	Read   []string
+	// Repo names the repository a ScanRepo read; "" for a machine.
+	Repo string
 }
 
 // MaxReportItems caps ScanAll, which reports more than the settings Scan does.
@@ -102,7 +110,11 @@ func ScanAll(env Env) Result {
 	res.Items = append(res.Items, s.hookItems()...)
 	res.Items = append(res.Items, s.permissionItems()...)
 	res.Items = append(res.Items, s.secretItems()...)
-	s.read[AreaSecrets] = s.read[AreaSecrets] || len(res.Agents) > 0
+	res.Items = append(res.Items, s.sourceItems()...)
+	if len(res.Agents) > 0 {
+		s.read[AreaSecrets] = true
+	}
+	res.Items = collapseCopies(res.Items)
 	Sort(res.Items)
 	if len(res.Items) > MaxReportItems {
 		res.Items = res.Items[:MaxReportItems]
@@ -137,4 +149,27 @@ func contains(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+var worktreeRE = regexp.MustCompile(`[/\\]\.claude[/\\]worktrees[/\\][^/\\]+`)
+
+// collapseCopies reports a finding once per repository: a git worktree is a
+// copy of its repository's files, and on a case-insensitive disk one
+// repository can be listed under two spellings of its path.
+func collapseCopies(items []Item) []Item {
+	seen := map[string]bool{}
+	out := items[:0]
+	for _, it := range items {
+		loc := worktreeRE.ReplaceAllString(it.Location, "")
+		if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+			loc = strings.ToLower(loc)
+		}
+		k := strings.Join([]string{it.Client, it.Check, it.Severity, it.Subject, it.Setting, loc}, "\x00")
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, it)
+	}
+	return out
 }

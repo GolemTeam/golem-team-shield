@@ -57,7 +57,7 @@ func IsCodexJailHook(command string) bool {
 	switch {
 	case len(f) >= 3 && f[1] == "codex-hook" && f[2] == "PreToolUse":
 		return true
-	case len(f) == 3 && strings.TrimSuffix(filepath.Base(f[0]), ".exe") == "golem-exec" && f[1] == "hook" && f[2] == "codex":
+	case isGolemExecHook(command, "codex"):
 		return true
 	}
 	return false

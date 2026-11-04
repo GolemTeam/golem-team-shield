@@ -44,8 +44,8 @@ func (s *scan) hookFiles() []hookFile {
 	return out
 }
 
-func readHookCommands(path, format string) []hookCommand {
-	m := readSettings(path)
+func (s *scan) readHookCommands(path, format string) []hookCommand {
+	m := s.readSettings(path)
 	hooks, _ := m["hooks"].(map[string]any)
 	var out []hookCommand
 	for _, event := range sortedAnyKeys(hooks) {
@@ -123,7 +123,7 @@ func hookScript(command, home, project string) string {
 		p = filepath.Join(project, p[strings.Index(p, "/")+1:])
 	case strings.Contains(p, "$"):
 		return ""
-	case filepath.IsAbs(p):
+	case filepath.IsAbs(p), strings.HasPrefix(p, "/"), strings.HasPrefix(p, `\`):
 	case strings.Contains(p, "/") && project != "":
 		p = filepath.Join(project, p)
 	default:
@@ -135,7 +135,7 @@ func hookScript(command, home, project string) string {
 func (s *scan) hookItems() []Item {
 	var out []Item
 	for _, hf := range s.hookFiles() {
-		cmds := readHookCommands(hf.path, hf.format)
+		cmds := s.readHookCommands(hf.path, hf.format)
 		var theirs []hookCommand
 		for _, c := range cmds {
 			if !golemHook(c.command) {

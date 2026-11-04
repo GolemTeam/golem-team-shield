@@ -62,6 +62,7 @@ type configScanner struct {
 	skip       map[string]bool
 	out        ConfigScan
 	mcpFiles   []mcpFile
+	queued     map[string]bool
 	extraFiles []configFile
 }
 
@@ -75,6 +76,11 @@ func ScanConfig(env Env, skip map[string]bool) ConfigScan {
 		return s.out
 	}
 	s.scanClaudeCode()
+	for _, p := range env.Projects {
+		if filepath.IsAbs(p) && !s.queued[p] {
+			s.queueProject(p)
+		}
+	}
 	for _, f := range s.mcpConfigPaths() {
 		s.scanMCPFile(f)
 	}
@@ -112,6 +118,9 @@ func (s *configScanner) display(path string) string {
 
 // read is readCapped that remembers a file which exists but could not be read.
 func (s *configScanner) read(path, area string) ([]byte, os.FileInfo, bool) {
+	if s.env.Repo != "" && !within(s.env.Repo, path) {
+		return nil, nil, false
+	}
 	b, info, ok := readCapped(path)
 	if ok {
 		s.out.Scanned[s.display(path)] = true
@@ -224,13 +233,21 @@ func (s *configScanner) scanClaudeCode() {
 		if i >= MaxProjects || !filepath.IsAbs(p) {
 			continue
 		}
-		s.mcpFiles = append(s.mcpFiles,
-			mcpFile{configFile{"claude-code", "project", filepath.Join(p, ".mcp.json")}, ""},
-			mcpFile{configFile{"cursor", "project", filepath.Join(p, ".cursor", "mcp.json")}, ""},
-			mcpFile{configFile{"vscode", "project", filepath.Join(p, ".vscode", "mcp.json")}, mcpFormatVSCode},
-			mcpFile{configFile{"codex", "project", filepath.Join(p, ".codex", "config.toml")}, mcpFormatCodex})
-		s.extraFiles = append(s.extraFiles, configFile{"claude-code", "project", filepath.Join(p, "CLAUDE.md")})
+		s.queueProject(p)
 	}
+}
+
+func (s *configScanner) queueProject(p string) {
+	if s.queued == nil {
+		s.queued = map[string]bool{}
+	}
+	s.queued[p] = true
+	s.mcpFiles = append(s.mcpFiles,
+		mcpFile{configFile{"claude-code", "project", filepath.Join(p, ".mcp.json")}, ""},
+		mcpFile{configFile{"cursor", "project", filepath.Join(p, ".cursor", "mcp.json")}, ""},
+		mcpFile{configFile{"vscode", "project", filepath.Join(p, ".vscode", "mcp.json")}, mcpFormatVSCode},
+		mcpFile{configFile{"codex", "project", filepath.Join(p, ".codex", "config.toml")}, mcpFormatCodex})
+	s.extraFiles = append(s.extraFiles, configFile{"claude-code", "project", filepath.Join(p, "CLAUDE.md")})
 }
 
 func (s *configScanner) mcpConfigPaths() []mcpFile {
