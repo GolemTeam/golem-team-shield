@@ -22,12 +22,15 @@ func ScanRepo(dir string) Result {
 		ManagedDir: unread, GeminiSystem: filepath.Join(unread, "settings.json"),
 	})
 	out := Result{Repo: filepath.Base(abs)}
-	prefix := abs + string(filepath.Separator)
+	// Locations come with either separator (DisplayHome writes slashes), so
+	// both sides are compared with slashes.
+	prefix := filepath.ToSlash(abs) + "/"
 	for _, it := range res.Items {
-		if it.Area == AreaProtections || !strings.HasPrefix(it.Location, prefix) {
+		loc := filepath.ToSlash(it.Location)
+		if it.Area == AreaProtections || !strings.HasPrefix(loc, prefix) {
 			continue
 		}
-		it.Location = filepath.ToSlash(strings.TrimPrefix(it.Location, prefix))
+		it.Location = strings.TrimPrefix(loc, prefix)
 		out.Items = append(out.Items, it)
 	}
 	for _, a := range res.Read {

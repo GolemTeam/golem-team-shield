@@ -5,6 +5,8 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -51,7 +53,7 @@ func TestWrapVectorsAreWrapsOwn(t *testing.T) {
 		}
 	}
 	got, err := os.ReadFile(path)
-	if err != nil || string(got) != string(want) {
+	if err != nil || strings.ReplaceAll(string(got), "\r\n", "\n") != string(want) {
 		t.Fatalf("%s is not what Wrap does; run go test -run WrapVectors -update", path)
 	}
 }
@@ -65,6 +67,9 @@ type hookSessionVector struct {
 }
 
 func TestHookSessionVectorsAreNoteHookSessionsOwn(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the vectors are POSIX paths, for the plugins on macOS and Linux; Windows cleans them to backslashes")
+	}
 	var vs []hookSessionVector
 	for _, c := range [][2]string{{"openclaw", "/work/repo"}, {"openclaw", "/Users/a b/src/x"}, {"gemini-cli", "/work/repo"}} {
 		vs = append(vs, hookSessionVector{Agent: c[0], Cwd: c[1], File: filepath.Base(hookSessionPath("/h", c[0], c[1]))})
@@ -77,7 +82,7 @@ func TestHookSessionVectorsAreNoteHookSessionsOwn(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got, err := os.ReadFile(path); err != nil || string(got) != string(want) {
+	if got, err := os.ReadFile(path); err != nil || strings.ReplaceAll(string(got), "\r\n", "\n") != string(want) {
 		t.Fatalf("%s is not what NoteHookSession does; run go test -run Vectors -update", path)
 	}
 }

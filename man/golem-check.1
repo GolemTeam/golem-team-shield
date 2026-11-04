@@ -47,9 +47,12 @@ or
 .BR scope ,
 .BR location ,
 .BR setting ,
-.B value
-and
-.BR detail .
+.BR value ,
+.BR detail ,
+and where they apply
+.B subject
+(the server, hook event, skill or plugin) and
+.BR line .
 .TP
 .B \-with\-score
 With
@@ -96,6 +99,19 @@ Print the version.
 written; 2 for a usage error; 3 when
 .B \-fail\-on
 found something at least that severe.
+.SH GITHUB ACTIONS
+The repository is also a GitHub Action that runs
+.B golem-check \-repo
+on the checked-out repository, uploads the SARIF report to code scanning, and
+fails the job on a finding at least as severe as its
+.B fail-on
+input:
+.PP
+.nf
+  - uses: GolemTeam/golem-team-shield@v0.2.0
+    with:
+      fail-on: dangerous
+.fi
 .SH SEE ALSO
 .BR golem\-exec (1)
 .PP
