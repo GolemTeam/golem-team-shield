@@ -111,7 +111,7 @@ func CoverageOf(env CoverageEnv) []AgentCoverage {
 		env.ShimReady = ReadyShim(env.GOOS)
 	}
 	var out []AgentCoverage
-	reads := []func(CoverageEnv) (AgentCoverage, bool){claudeCoverage, codexCoverage, geminiCoverage, cursorCoverage, copilotCoverage, antigravityCoverage}
+	reads := []func(CoverageEnv) (AgentCoverage, bool){claudeCoverage, codexCoverage, geminiCoverage, cursorCoverage, copilotCoverage, antigravityCoverage, devinCoverage, vscodeCoverage}
 	for _, a := range pluginAgents {
 		reads = append(reads, pluginCoverage(a))
 	}

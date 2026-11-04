@@ -24,7 +24,7 @@ func CopilotRewrite(shim string, in map[string]any) map[string]any {
 	if _, snake := in["hook_event_name"]; snake {
 		return nil
 	}
-	if name, _ := in["toolName"].(string); name != "bash" {
+	if name, _ := in["toolName"].(string); name != copilotShellTool(shim) {
 		return nil
 	}
 	args := map[string]any{}
@@ -37,12 +37,21 @@ func CopilotRewrite(shim string, in map[string]any) map[string]any {
 		_ = json.Unmarshal([]byte(a), &args)
 	}
 	command, _ := args["command"].(string)
-	wrapped, err := Wrap(shim, command)
+	wrapped, err := WrapCommand(shim, command)
 	if err != nil {
 		return map[string]any{"permissionDecision": "deny", "permissionDecisionReason": "Golem can't run this command in its shell jail, so it was not run"}
 	}
 	args["command"] = wrapped
 	return map[string]any{"modifiedArgs": args}
+}
+
+// copilotShellTool is the tool a shim's rewrite is for: bash, or powershell
+// on Windows.
+func copilotShellTool(shim string) string {
+	if strings.HasSuffix(strings.ToLower(shim), ".exe") {
+		return "powershell"
+	}
+	return "bash"
 }
 
 // NoteCopilotSession leaves the hook's session for the shim. Copilot's
@@ -69,9 +78,15 @@ func CopilotHooksFile(home string) string {
 }
 
 // CopilotHookFile is the content of CopilotHooksFile for a golem-exec at exe.
-func CopilotHookFile(exe string) []byte {
+// Copilot runs a hook's powershell command on Windows, and its bash one
+// elsewhere.
+func CopilotHookFile(exe string, windows bool) []byte {
+	hook := map[string]any{"type": "command", "bash": exe + " hook copilot", "timeoutSec": codexHookTimeout}
+	if windows {
+		hook = map[string]any{"type": "command", "powershell": PowerShellHook(exe, "hook", "copilot"), "timeoutSec": codexHookTimeout}
+	}
 	b, _ := json.MarshalIndent(map[string]any{"version": 1, "hooks": map[string]any{
-		"preToolUse": []map[string]any{{"type": "command", "bash": exe + " hook copilot", "timeoutSec": codexHookTimeout}},
+		"preToolUse": []map[string]any{hook},
 	}}, "", "  ")
 	return append(b, '\n')
 }
@@ -89,8 +104,9 @@ func copilotCoverage(env CoverageEnv) (AgentCoverage, bool) {
 	}
 	dir := filepath.Join(env.Home, ".copilot", "hooks")
 	c := AgentCoverage{Client: "copilot", Label: "Copilot CLI", Coverage: NotJailed, Location: tilde(env.Home, dir)}
-	if env.GOOS == "windows" {
-		c.Detail = "On Windows Golem doesn't rewrite Copilot CLI's PowerShell commands: approving one for the session would approve every command"
+	shim, past := hookShimFor(env, filepath.Join(HookShimDir(env.Home), "bash"))
+	if shim == "" {
+		c.Detail = "On Windows Golem doesn't rewrite Copilot CLI's PowerShell commands: approving one for the session would approve every command" + pastApprovalHint
 		return c, true
 	}
 	hooked := false
@@ -103,7 +119,8 @@ func copilotCoverage(env CoverageEnv) (AgentCoverage, bool) {
 		var doc struct {
 			Hooks struct {
 				PreToolUse []struct {
-					Bash string `json:"bash"`
+					Bash       string `json:"bash"`
+					PowerShell string `json:"powershell"`
 				} `json:"preToolUse"`
 			} `json:"hooks"`
 		}
@@ -111,10 +128,13 @@ func copilotCoverage(env CoverageEnv) (AgentCoverage, bool) {
 			continue
 		}
 		for _, h := range doc.Hooks.PreToolUse {
-			hooked = hooked || IsCopilotJailHook(h.Bash)
+			cmd := h.Bash
+			if env.GOOS == "windows" {
+				cmd = h.PowerShell
+			}
+			hooked = hooked || IsCopilotJailHook(cmd)
 		}
 	}
-	shim := filepath.Join(HookShimDir(env.Home), "bash")
 	switch {
 	case !hooked:
 		c.Detail = "Copilot CLI's shell commands run without the Golem jail: no preToolUse hook rewrites them"
@@ -122,7 +142,7 @@ func copilotCoverage(env CoverageEnv) (AgentCoverage, bool) {
 		c.Detail = "Copilot CLI's hook would run its shell commands in the Golem jail, but " + tilde(env.Home, shim) + " is not installed"
 	default:
 		c.Coverage, c.Via = Jailed, "pre-tool hook"
-		c.Detail = "Copilot CLI's shell commands run in the Golem jail through its preToolUse hook"
+		c.Detail = "Copilot CLI's shell commands run in the Golem jail through its preToolUse hook" + past
 	}
 	return c, true
 }

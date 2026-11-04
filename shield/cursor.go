@@ -40,8 +40,8 @@ func CursorRewrite(shim string, in map[string]any) map[string]any {
 const cursorScriptRewrites = "def shield_rewrite("
 
 func isGolemExecHook(command, client string) bool {
-	f := strings.Fields(command)
-	return len(f) == 3 && strings.TrimSuffix(filepath.Base(f[0]), ".exe") == "golem-exec" && f[1] == "hook" && f[2] == client
+	f := hookArgs(command)
+	return len(f) == 3 && strings.TrimSuffix(filepath.Base(strings.ReplaceAll(f[0], `\`, "/")), ".exe") == "golem-exec" && f[1] == "hook" && f[2] == client
 }
 
 // CursorHook is golem-exec's own preToolUse entry in ~/.cursor/hooks.json.

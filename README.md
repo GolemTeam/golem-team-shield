@@ -53,16 +53,20 @@ of their own, listed under
 | Agent | How its commands reach the jail | Where |
 |---|---|---|
 | Claude Code | Its shell setting, `CLAUDE_CODE_SHELL`, names the shim | macOS, Linux, Windows |
-| Codex | Its `PreToolUse` hook rewrites each command to run through the shim. Codex asks you to approve the new hook once | macOS, Linux |
-| Gemini CLI | Its `BeforeTool` hook, the same way | macOS, Linux |
+| Codex | Its `PreToolUse` hook rewrites each command to run through the shim. Codex asks you to approve the new hook once | macOS, Linux; Windows with `--all-agents` |
+| Gemini CLI | Its `BeforeTool` hook, the same way | macOS, Linux; Windows with `--all-agents` |
 | Cursor (the editor's agent and `cursor-agent`) | Its `preToolUse` hook, the same way. If the hook fails, the command is refused | macOS, Linux |
-| Copilot CLI | Its `preToolUse` hook, from `~/.copilot/hooks/golem-shield.json`. If the hook fails, the command is refused | macOS, Linux |
+| Copilot CLI | Its `preToolUse` hook, from `~/.copilot/hooks/golem-shield.json`. If the hook fails, the command is refused | macOS, Linux; Windows with `--all-agents` |
+| Devin (Desktop and CLI) | Its `PreToolUse` hook, in `~/.config/devin/config.json`. Its `Exec(…)` rules may see only the wrapper, so only with `--all-agents` | with `--all-agents` |
 
 The rewritten command is a plain `bash -c '…'` or `zsh -c '…'`, so the agent
 still asks you about the command it meant to run, and your allow and deny rules
-still match it. On Windows these agents run PowerShell. The jail can run it, but
-their commands aren't rewritten there yet: Codex's, Gemini CLI's and Copilot
-CLI's own approval would see only the wrapper, not the command. On macOS, a command an agent runs inside its own
+still match it. On Windows these agents run PowerShell, and the rewrite there is
+a PowerShell command that runs the shim, so their own approval would see only
+that wrapper, not the command: one "always allow" could then approve every later
+command, each still jailed, and Codex's dangerous-command warnings would no
+longer fire. They are rewritten there only with `golem-exec install
+--all-agents` (`"jail_past_approval": true`), and so is Devin everywhere. On macOS, a command an agent runs inside its own
 sandbox (Codex's default, or Cursor's or Gemini CLI's when turned on) stays in
 that sandbox, because macOS can't put one sandbox inside another. On Linux the
 two stack.
@@ -167,7 +171,8 @@ command and setting; the release archives carry the pages in `man/`.
   "writes": "anywhere",
   "allow_write": [],
   "network": "open",
-  "allowed_hosts": []
+  "allowed_hosts": [],
+  "jail_past_approval": false
 }
 ```
 
@@ -184,6 +189,7 @@ command and setting; the release archives carry the pages in `man/`.
 | `allow_write` | More places a `"workspace"` command may write: absolute paths or `~/…`, such as `~/go/bin`. One that holds your home directory is ignored. |
 | `network` | `"allowlist"` lets commands reach only `allowed_hosts`, through a proxy; everything else, DNS included, is refused. `"open"` (the default) leaves the network alone. On Linux it uses a network namespace, or where the kernel allows none, Landlock's port rule, which lets a program that ignores the proxy reach any host on the proxy's port. On Windows the network is held by firewall filters you install once from an administrator prompt, `golem-exec firewall install`; without them only programs that use the proxy are held to the list. |
 | `allowed_hosts` | `example.com`, `*.example.com` (its subdomains) or `*` (any public host, everything recorded). Any port. `localhost` lets commands reach servers on this machine, a test server they start included; without it loopback is refused. The cloud metadata address is never reachable. With the network confined, `open` and AppleScript can't hand a URL to another app on macOS. |
+| `jail_past_approval` | `true` also jails the agents whose own approval would see only the jail's wrapper: Codex, Gemini CLI and Copilot CLI on Windows, and Devin. `golem-exec install --all-agents` writes it and adds their hooks. Off by default. |
 
 Changes apply to the next command; there is nothing to restart. The jail can
 neither read nor write `~/.golem`, so the agent being watched can't loosen its

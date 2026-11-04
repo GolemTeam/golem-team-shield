@@ -99,6 +99,8 @@ var windowsProtectedWrites = []match{
 	sub("AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup"),
 	sub("Documents/WindowsPowerShell"),
 	sub("Documents/PowerShell"),
+	lit("AppData/Roaming/Code/User/settings.json"),
+	lit("AppData/Roaming/Code - Insiders/User/settings.json"),
 }
 
 var macOnly = map[string]bool{"Library/LaunchAgents": true, "Library/Keychains": true}

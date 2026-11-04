@@ -179,3 +179,52 @@ func WriteFile(path string, doc *Object) error {
 	}
 	return os.Rename(tmpName, path)
 }
+
+// StripJSONC removes // and /* */ comments and trailing commas outside
+// strings: VS Code's and Gemini's settings files allow both.
+func StripJSONC(b []byte) []byte {
+	var out bytes.Buffer
+	out.Grow(len(b))
+	inString := false
+	for i := 0; i < len(b); i++ {
+		c := b[i]
+		if inString {
+			out.WriteByte(c)
+			if c == '\\' && i+1 < len(b) {
+				i++
+				out.WriteByte(b[i])
+			} else if c == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch {
+		case c == '"':
+			inString = true
+			out.WriteByte(c)
+		case c == '/' && i+1 < len(b) && b[i+1] == '/':
+			for i < len(b) && b[i] != '\n' {
+				i++
+			}
+			out.WriteByte('\n')
+		case c == '/' && i+1 < len(b) && b[i+1] == '*':
+			i += 2
+			for i+1 < len(b) && !(b[i] == '*' && b[i+1] == '/') {
+				i++
+			}
+			i++
+		case c == ',':
+			j := i + 1
+			for j < len(b) && (b[j] == ' ' || b[j] == '\t' || b[j] == '\n' || b[j] == '\r') {
+				j++
+			}
+			if j < len(b) && (b[j] == '}' || b[j] == ']') {
+				continue
+			}
+			out.WriteByte(c)
+		default:
+			out.WriteByte(c)
+		}
+	}
+	return out.Bytes()
+}

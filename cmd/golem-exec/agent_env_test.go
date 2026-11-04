@@ -50,4 +50,13 @@ func TestSessionFromEnv(t *testing.T) {
 	if s, _ := sessionFromEnv(func(k string) string { return map[string]string{"GEMINI_CLI": "1"}[k] }, home, cwd, now.Add(2*time.Hour)); s != "" {
 		t.Fatalf("a stale note still named the session: %q", s)
 	}
+	if err := shield.NoteHookSession(home, "devin", "/work/devin", "dv-1"); err != nil {
+		t.Fatal(err)
+	}
+	if s, a := sessionFromEnv(func(string) string { return "" }, home, "/work/devin", now); s != "dv-1" || a != "devin" {
+		t.Fatalf("Devin's hook note should name a command with no variable: (%q, %q)", s, a)
+	}
+	if s, a := sessionFromEnv(func(k string) string { return map[string]string{"CODEX_THREAD_ID": "019a"}[k] }, home, "/work/devin", now); s != "019a" || a != "codex" {
+		t.Fatalf("a Devin note outranked a client's own variable: (%q, %q)", s, a)
+	}
 }

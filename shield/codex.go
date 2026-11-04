@@ -35,7 +35,7 @@ func CodexRewrite(shim string, in map[string]any) map[string]any {
 	}
 	input, _ := in["tool_input"].(map[string]any)
 	command, _ := input["command"].(string)
-	wrapped, err := Wrap(shim, command)
+	wrapped, err := WrapCommand(shim, command)
 	if err != nil {
 		return map[string]any{"hookSpecificOutput": map[string]any{
 			"hookEventName":            "PreToolUse",
@@ -194,8 +194,9 @@ func codexCoverage(env CoverageEnv) (AgentCoverage, bool) {
 	}
 	hooksPath := filepath.Join(dir, "hooks.json")
 	c := AgentCoverage{Client: "codex", Label: "Codex", Coverage: NotJailed, Location: tilde(env.Home, hooksPath)}
-	if env.GOOS == "windows" {
-		c.Detail = "On Windows Golem doesn't rewrite Codex's PowerShell commands: Codex's own dangerous-command checks would no longer see them"
+	shim, past := hookShimFor(env, HookShim(env.Home, env.LoginShell))
+	if shim == "" {
+		c.Detail = "On Windows Golem doesn't rewrite Codex's PowerShell commands: Codex's own dangerous-command checks would no longer see them" + pastApprovalHint
 		return c, true
 	}
 	group := -1
@@ -215,7 +216,6 @@ func codexCoverage(env CoverageEnv) (AgentCoverage, bool) {
 		}
 	}
 	config, _ := os.ReadFile(filepath.Join(dir, "config.toml"))
-	shim := HookShim(env.Home, env.LoginShell)
 	switch {
 	case group < 0:
 		c.Detail = "Codex's shell commands run without the Golem jail: no PreToolUse hook rewrites them"
@@ -225,7 +225,7 @@ func codexCoverage(env CoverageEnv) (AgentCoverage, bool) {
 		c.Detail = "Codex's hook would run its shell commands in the Golem jail, but " + tilde(env.Home, shim) + " is not installed"
 	default:
 		c.Coverage, c.Via = Jailed, "pre-tool hook"
-		c.Detail = "Codex's shell commands run in the Golem jail through its PreToolUse hook"
+		c.Detail = "Codex's shell commands run in the Golem jail through its PreToolUse hook" + past
 	}
 	return c, true
 }

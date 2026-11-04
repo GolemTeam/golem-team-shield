@@ -24,6 +24,8 @@ import (
 const cliUsage = `usage: golem-exec <command>
 
   install [--strict]   jail the shell commands Claude Code, Codex, Gemini CLI, Cursor and Copilot CLI run
+  install --all-agents also jail the agents whose own approval would see only the jail
+                       (Codex, Gemini CLI and Copilot CLI on Windows, and Devin): "jail_past_approval"
   install --refresh    update an installed shim to this binary, and nothing else
   status               show what is installed and the policy commands get
   firewall install     on Windows, as administrator: hold an allowed-hosts network to its list
@@ -87,7 +89,7 @@ func runCommand(s *setup, args []string) int {
 		if flags["refresh"] {
 			return s.refresh()
 		}
-		return s.install(flags["strict"])
+		return s.install(flags["strict"], flags["all-agents"])
 	case "uninstall":
 		return s.uninstall(flags["purge"])
 	case "status":
@@ -160,7 +162,7 @@ func (s *setup) agentPresent() bool {
 const agentManages = "The Golem agent runs the shield on this machine and decides its policy.\n" +
 	"Its settings are in the console, or `golem lockdown` with no account. Check it with `golem doctor`.\n"
 
-func (s *setup) install(strict bool) int {
+func (s *setup) install(strict, allAgents bool) int {
 	if s.agentRuns() {
 		fmt.Fprint(s.stdout, agentManages)
 		return 0
@@ -191,6 +193,12 @@ func (s *setup) install(strict bool) int {
 	} else if strict {
 		fmt.Fprintf(s.stdout, "Kept your settings in %s; set \"cloud_credentials\": false there for --strict\n", cfgPath)
 	}
+	if allAgents {
+		if err := s.jailPastApproval(cfgPath); err != nil {
+			fmt.Fprintf(s.stderr, "golem-exec: could not set \"jail_past_approval\" in %s: %v\n", cfgPath, err)
+			return 1
+		}
+	}
 
 	code := 0
 	cs := s.claudeShell()
@@ -219,6 +227,24 @@ func (s *setup) install(strict bool) int {
 	fmt.Fprintln(s.stdout, "  check:     golem-exec status")
 	fmt.Fprintln(s.stdout, "  remove:    golem-exec uninstall")
 	return code
+}
+
+// jailPastApproval sets jail_past_approval in the settings, leaving the rest
+// of the file as the person wrote it.
+func (s *setup) jailPastApproval(cfgPath string) error {
+	if c, _, err := shield.LoadConfig(cfgPath); err != nil || c.JailPastApproval {
+		return err
+	}
+	doc, _, err := jsonobject.ReadFile(cfgPath)
+	if err != nil {
+		return err
+	}
+	doc.Set("jail_past_approval", json.RawMessage("true"))
+	if err := jsonobject.WriteFile(cfgPath, doc); err != nil {
+		return err
+	}
+	fmt.Fprintln(s.stdout, "Agents whose own approval would see only the jail are jailed too: one \"always allow\" in them could approve every later command")
+	return nil
 }
 
 // refresh replaces an installed shim with this binary, so upgrading the copy a

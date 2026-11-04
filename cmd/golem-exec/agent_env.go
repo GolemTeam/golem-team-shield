@@ -48,5 +48,10 @@ func sessionFromEnv(getenv func(string) string, home, cwd string, now time.Time)
 			return shield.HookSession(home, m.agent, cwd, now), m.agent
 		}
 	}
+	// Devin's commands set no variable known to name it, so what its hook
+	// noted for this directory is read last.
+	if id := shield.HookSession(home, "devin", cwd, now); id != "" {
+		return id, "devin"
+	}
 	return "", ""
 }

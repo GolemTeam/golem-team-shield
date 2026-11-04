@@ -26,7 +26,7 @@ func GeminiRewrite(shim string, in map[string]any) map[string]any {
 	}
 	input, _ := in["tool_input"].(map[string]any)
 	command, _ := input["command"].(string)
-	wrapped, err := Wrap(shim, command)
+	wrapped, err := WrapCommand(shim, command)
 	if err != nil {
 		return map[string]any{"decision": "deny", "reason": "Golem can't run this command in its shell jail, so it was not run"}
 	}
@@ -103,8 +103,9 @@ func geminiCoverage(env CoverageEnv) (AgentCoverage, bool) {
 	}
 	settings := filepath.Join(env.Home, ".gemini", "settings.json")
 	c := AgentCoverage{Client: "gemini-cli", Label: "Gemini CLI", Coverage: NotJailed, Location: tilde(env.Home, settings)}
-	if env.GOOS == "windows" {
-		c.Detail = "On Windows Golem doesn't rewrite Gemini CLI's PowerShell commands: one \"always allow\" would then approve every command"
+	shim, past := hookShimFor(env, filepath.Join(HookShimDir(env.Home), "bash"))
+	if shim == "" {
+		c.Detail = "On Windows Golem doesn't rewrite Gemini CLI's PowerShell commands: one \"always allow\" would then approve every command" + pastApprovalHint
 		return c, true
 	}
 	hooked := false
@@ -128,7 +129,6 @@ func geminiCoverage(env CoverageEnv) (AgentCoverage, bool) {
 			}
 		}
 	}
-	shim := filepath.Join(HookShimDir(env.Home), "bash")
 	switch {
 	case !hooked:
 		c.Detail = "Gemini CLI's shell commands run without the Golem jail: no BeforeTool hook rewrites them"
@@ -136,7 +136,7 @@ func geminiCoverage(env CoverageEnv) (AgentCoverage, bool) {
 		c.Detail = "Gemini CLI's hook would run its shell commands in the Golem jail, but " + tilde(env.Home, shim) + " is not installed"
 	default:
 		c.Coverage, c.Via = Jailed, "pre-tool hook"
-		c.Detail = "Gemini CLI's shell commands run in the Golem jail through its BeforeTool hook"
+		c.Detail = "Gemini CLI's shell commands run in the Golem jail through its BeforeTool hook" + past
 	}
 	return c, true
 }

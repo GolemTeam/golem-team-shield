@@ -21,7 +21,14 @@ import (
 func (s *setup) codexHomes() []string { return shield.CodexHomes(s.home, s.codexHome) }
 
 func (s *setup) hookCommand(client string) string {
-	return filepath.Join(s.binDir(), "golem-exec") + " hook " + client
+	return s.hookExe() + " hook " + client
+}
+
+func (s *setup) hookExe() string {
+	if s.goos == "windows" {
+		return filepath.Join(s.binDir(), "golem-exec.exe")
+	}
+	return filepath.Join(s.binDir(), "golem-exec")
 }
 
 // agentHook is one agent golem-exec registers its hook with: the files to
@@ -33,7 +40,7 @@ type agentHook struct {
 	undo  func(*jsonobject.Object) ([]string, error)
 }
 
-func (s *setup) agentHooks() []agentHook {
+func (s *setup) agentHooks(remove bool) []agentHook {
 	codex := shield.CodexHook{Command: s.hookCommand("codex")}
 	var codexFiles []string
 	for _, dir := range s.codexHomes() {
@@ -51,23 +58,39 @@ func (s *setup) agentHooks() []agentHook {
 	if shield.CursorInstalled(s.home) {
 		cursorFiles = []string{filepath.Join(s.home, ".cursor", "hooks.json")}
 	}
+	if s.goos == "windows" {
+		cursorFiles = nil
+	}
+	devin := shield.DevinHook{Command: s.hookCommand("devin")}
+	var devinFiles []string
+	if shield.DevinInstalled(s.home) && (remove || shield.JailsPastApproval(s.home)) {
+		devinFiles = []string{shield.DevinConfig(s.home)}
+	}
 	return []agentHook{
 		{"Codex", codexFiles, codex.Wire, codex.Unwire},
 		{"Gemini CLI", geminiFiles, gemini.Wire, gemini.Unwire},
 		{"Cursor", cursorFiles, cursor.Wire, cursor.Unwire},
+		{"Devin", devinFiles, devin.Wire, devin.Unwire},
 	}
 }
 
 // wireAgents adds or removes golem-exec's hook in each agent installed here,
-// and says what it changed. Those agents run PowerShell on Windows, which the
-// jail doesn't cover, so they are left alone there.
+// and says what it changed. On Windows those agents run PowerShell, and their
+// own approval would see only the jail's rewrite, so they are wired there only
+// with jail_past_approval (shield.JailsPastApproval); Cursor isn't wired there.
 func (s *setup) wireAgents(remove bool) int {
-	if s.goos == "windows" {
-		return 0
+	if s.goos == "windows" && !remove {
+		if !shield.JailsPastApproval(s.home) {
+			return 0
+		}
+		if strings.ContainsRune(s.hookExe(), ' ') {
+			fmt.Fprintf(s.stderr, "golem-exec: the agents run a hook by a path with no quotes, and %s has a space, so their hooks were not added\n", s.hookExe())
+			return 1
+		}
 	}
 	code := 0
 	code |= s.wireCopilot(remove)
-	for _, a := range s.agentHooks() {
+	for _, a := range s.agentHooks(remove) {
 		edit := a.wire
 		if remove {
 			edit = a.undo
@@ -100,7 +123,7 @@ func (s *setup) wireCopilot(remove bool) int {
 		}
 		return 0
 	}
-	want := shield.CopilotHookFile(filepath.Join(s.binDir(), "golem-exec"))
+	want := shield.CopilotHookFile(s.hookExe(), s.goos == "windows")
 	if got, err := os.ReadFile(path); err == nil && string(got) == string(want) {
 		return 0
 	}
@@ -141,25 +164,32 @@ func (s *setup) hook(args []string) int {
 		return 0
 	}
 	var out map[string]any
+	bash := filepath.Join(shield.HookShimDir(s.home), "bash")
 	switch args[0] {
 	case "codex":
-		if shim := shield.HookShim(s.home, s.loginShell); s.shimRuns(shim) {
+		if shim := s.hookShim(shield.HookShim(s.home, s.loginShell)); shim != "" {
 			out = shield.CodexRewrite(shim, in)
 		}
 	case "cursor":
-		if shim := shield.HookShim(s.home, s.loginShell); s.shimRuns(shim) {
+		if shim := shield.HookShim(s.home, s.loginShell); s.goos != "windows" && shield.ReadyShim(s.goos)(shim) {
 			out = shield.CursorRewrite(shim, in)
 		}
 	case "copilot":
-		if shim := filepath.Join(shield.HookShimDir(s.home), "bash"); s.shimRuns(shim) {
+		if shim := s.hookShim(bash); shim != "" {
 			if out = shield.CopilotRewrite(shim, in); out != nil {
 				shield.NoteCopilotSession(s.home, in)
 			}
 		}
 	case "gemini-cli":
-		if shim := filepath.Join(shield.HookShimDir(s.home), "bash"); s.shimRuns(shim) {
+		if shim := s.hookShim(bash); shim != "" {
 			if out = shield.GeminiRewrite(shim, in); out != nil {
 				shield.NoteGeminiSession(s.home, in)
+			}
+		}
+	case "devin":
+		if shim := s.hookShim(shield.HookShim(s.home, s.loginShell)); shim != "" && shield.JailsPastApproval(s.home) {
+			if out = shield.DevinRewrite(shim, in); out != nil {
+				shield.NoteDevinSession(s.home, in)
 			}
 		}
 	}
@@ -170,8 +200,20 @@ func (s *setup) hook(args []string) int {
 	return 0
 }
 
-func (s *setup) shimRuns(shim string) bool {
-	return s.goos != "windows" && shield.ReadyShim(s.goos)(shim)
+// hookShim is the shim a hook's rewrite names, or "" where none runs: posix,
+// and on Windows the PowerShell shim, only with jail_past_approval.
+func (s *setup) hookShim(posix string) string {
+	shim := posix
+	if s.goos == "windows" {
+		if !shield.JailsPastApproval(s.home) {
+			return ""
+		}
+		shim = shield.WindowsHookShim(s.home)
+	}
+	if !shield.ReadyShim(s.goos)(shim) {
+		return ""
+	}
+	return shim
 }
 
 // installWindowsShims copies this binary to bash.exe for Claude Code, to

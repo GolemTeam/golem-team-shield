@@ -80,7 +80,9 @@ Gemini CLI
 .RI ( ~/.gemini/settings.json )
 and Cursor
 .RI ( ~/.cursor/hooks.json )
-where each is installed (not on Windows), and run the self-test.
+where each is installed (on Windows only with
+.BR \-\-all\-agents ,
+and never Cursor's), and run the self-test.
 Codex asks once to approve the new hook.
 A shell you set in Claude Code yourself is left alone.
 It refuses where the jail cannot be built, and does nothing where the Golem
@@ -91,6 +93,19 @@ Restart your agents afterwards.
 As
 .BR install ,
 and a new settings file also keeps cloud credentials out of reach.
+.TP
+.B install \-\-all\-agents
+As
+.BR install ,
+and also jail the agents whose own approval would see only the jail's
+wrapper: Codex, Gemini CLI and Copilot CLI on Windows, and Devin
+.RI ( ~/.config/devin/config.json ).
+It sets
+.B jail_past_approval
+in
+.I ~/.golem/shield.json
+and adds their hooks. One "always allow" in those agents could then approve
+every later command, each still jailed.
 .TP
 .B firewall install
 On Windows, as administrator: install the Windows Filtering Platform filters

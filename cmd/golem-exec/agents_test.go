@@ -25,7 +25,7 @@ func TestInstallHooksCodexAndUninstallTakesItOut(t *testing.T) {
 	}
 	f := newFakeSetup(t, "darwin")
 	hooks := withCodex(t, f)
-	if code := f.install(false); code != 0 {
+	if code := f.install(false, false); code != 0 {
 		t.Fatalf("exit %d: %s", code, f.errs.String())
 	}
 	b, _ := os.ReadFile(hooks)
@@ -51,7 +51,7 @@ func TestInstallHooksCodexAndUninstallTakesItOut(t *testing.T) {
 
 func TestNoCodexMeansNoCodexHook(t *testing.T) {
 	f := newFakeSetup(t, hostLayout())
-	f.install(false)
+	f.install(false, false)
 	if _, err := os.Stat(filepath.Join(f.home, ".codex")); err == nil {
 		t.Fatal("install created a Codex directory")
 	}
@@ -62,7 +62,7 @@ func TestTheCodexHookJailsEveryCommand(t *testing.T) {
 		t.Skip("Codex runs PowerShell on Windows")
 	}
 	f := newFakeSetup(t, "darwin")
-	if code := f.install(false); code != 0 {
+	if code := f.install(false, false); code != 0 {
 		t.Fatalf("exit %d: %s", code, f.errs.String())
 	}
 	shim := filepath.Join(shield.HookShimDir(f.home), "zsh")
@@ -108,7 +108,7 @@ func TestInstallHooksGeminiAndUninstallTakesItOut(t *testing.T) {
 	settings := filepath.Join(f.home, ".gemini", "settings.json")
 	writeFile(t, filepath.Join(f.home, ".gemini", "installation_id"), "x")
 	writeFile(t, settings, `{"theme": "x"}`)
-	if code := f.install(false); code != 0 {
+	if code := f.install(false, false); code != 0 {
 		t.Fatalf("exit %d: %s", code, f.errs.String())
 	}
 	if b, _ := os.ReadFile(settings); !strings.Contains(string(b), f.hookCommand("gemini-cli")) || !strings.Contains(string(b), `"theme"`) {
@@ -132,7 +132,7 @@ func TestTheGeminiHookJailsEveryCommand(t *testing.T) {
 		t.Skip("Gemini CLI runs PowerShell on Windows")
 	}
 	f := newFakeSetup(t, "darwin")
-	if code := f.install(false); code != 0 {
+	if code := f.install(false, false); code != 0 {
 		t.Fatalf("exit %d: %s", code, f.errs.String())
 	}
 	shim := filepath.Join(shield.HookShimDir(f.home), "bash")
@@ -169,7 +169,7 @@ func TestInstallHooksCursorAndTheHookJailsItsCommands(t *testing.T) {
 	f := newFakeSetup(t, "darwin")
 	hooks := filepath.Join(f.home, ".cursor", "hooks.json")
 	writeFile(t, hooks, `{"version": 1, "hooks": {"stop": [{"command": "mine.sh"}]}}`)
-	if code := f.install(false); code != 0 {
+	if code := f.install(false, false); code != 0 {
 		t.Fatalf("exit %d: %s", code, f.errs.String())
 	}
 	if b, _ := os.ReadFile(hooks); !strings.Contains(string(b), f.hookCommand("cursor")) || !strings.Contains(string(b), "mine.sh") {
@@ -211,7 +211,7 @@ func TestInstallHooksCopilotAndTheHookJailsItsCommands(t *testing.T) {
 	f := newFakeSetup(t, "darwin")
 	writeFile(t, filepath.Join(f.home, ".copilot", "config.json"), "{}")
 	writeFile(t, filepath.Join(f.home, ".copilot", "hooks", "mine.json"), `{"version": 1}`)
-	if code := f.install(false); code != 0 {
+	if code := f.install(false, false); code != 0 {
 		t.Fatalf("exit %d: %s", code, f.errs.String())
 	}
 	if b, _ := os.ReadFile(shield.CopilotHooksFile(f.home)); !strings.Contains(string(b), f.hookCommand("copilot")) {
@@ -257,6 +257,7 @@ var hookShellCalls = map[string]map[string]any{
 	"gemini-cli": {"hook_event_name": "BeforeTool", "session_id": "gem-1", "cwd": "/w", "tool_name": "run_shell_command", "tool_input": map[string]any{"command": "ls"}},
 	"cursor":     {"hook_event_name": "preToolUse", "tool_name": "Shell", "tool_input": map[string]any{"command": "ls", "cwd": "/w"}},
 	"copilot":    {"sessionId": "cp-1", "cwd": "/w", "toolName": "bash", "toolArgs": map[string]any{"command": "ls", "description": "d"}},
+	"devin":      {"hook_event_name": "PreToolUse", "session_id": "dv-1", "cwd": "/w", "tool_name": "exec", "tool_input": map[string]any{"command": "ls"}},
 }
 
 func TestTheHookJailsEveryClientTheAttachmentsGiveIt(t *testing.T) {
@@ -264,11 +265,21 @@ func TestTheHookJailsEveryClientTheAttachmentsGiveIt(t *testing.T) {
 		t.Skip("the hook clients run PowerShell on Windows")
 	}
 	f := newFakeSetup(t, "darwin")
-	if code := f.install(false); code != 0 {
+	if code := f.install(false, false); code != 0 {
 		t.Fatalf("exit %d: %s", code, f.errs.String())
 	}
 	for _, a := range shield.Attachments {
 		in, _ := json.Marshal(hookShellCalls[a.Client])
+		if a.PastApproval && a.FreeTool == shield.AttachHook {
+			f.stdin = strings.NewReader(string(in))
+			f.out.Reset()
+			if code := runCommand(f.setup, []string{"hook", a.Client}); code != 0 || f.out.Len() != 0 {
+				t.Errorf("golem-exec hook %s without jail_past_approval: exit %d, %s", a.Client, code, f.out.String())
+			}
+			if err := f.jailPastApproval(shield.ConfigPath(f.home)); err != nil {
+				t.Fatal(err)
+			}
+		}
 		f.stdin = strings.NewReader(string(in))
 		f.out.Reset()
 		code := runCommand(f.setup, []string{"hook", a.Client})

@@ -10,9 +10,11 @@ var Attachments = []Attachment{
 	{Client: "gemini-cli", FreeTool: AttachHook, Agent: AttachHook},
 	{Client: "cursor", FreeTool: AttachHook, Agent: AttachHook},
 	{Client: "copilot", FreeTool: AttachHook, Agent: AttachHook},
+	{Client: "devin", FreeTool: AttachHook, Agent: AttachHook, PastApproval: true},
 	{Client: "antigravity", Agent: AttachHook, Why: "Antigravity's hook must answer a decision, and any golem-exec gave would change whether it asks; the agent's hook already answers one"},
 	{Client: "hermes", Agent: AttachPlugin, Why: "the jail reaches Hermes through the Golem plugin, which only the agent installs"},
 	{Client: "openclaw", Agent: AttachPlugin, Why: "the jail reaches OpenClaw through the Golem plugin, which only the agent installs"},
+	{Client: "vscode", Agent: AttachProfile, PastApproval: true, Why: "the profile is a setting in VS Code's settings.json, which holds the person's comments, and only the agent's editor keeps them"},
 }
 
 type Attachment struct {
@@ -20,12 +22,18 @@ type Attachment struct {
 	FreeTool string
 	Agent    string
 	Why      string
+	// PastApproval: attached only with jail_past_approval, as the client's
+	// own approval would see only the jail (JailsPastApproval).
+	PastApproval bool
 }
 
 const (
 	AttachShell  = "shell setting"
 	AttachHook   = "pre-tool hook"
 	AttachPlugin = "Golem plugin"
+	// AttachProfile names the shim as the shell of the terminals the agent
+	// runs its commands in.
+	AttachProfile = "terminal profile"
 )
 
 // FreeHookClients are the clients golem-exec answers `golem-exec hook` for.
