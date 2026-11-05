@@ -13,6 +13,18 @@ jobs:
           go-version-file: go.mod
       - run: go vet ./...
       - run: go test ./...
+  # Ubuntu's default since 23.10: AppArmor keeps user namespaces from
+  # programs it doesn't name, so an allowlisted shell is held by Landlock's
+  # port rule rather than a namespace. These tests check that it still holds.
+  linux-restricted-userns:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
+      - run: go test -v -run TestLinux ./cmd/golem-exec
   release-config:
     runs-on: ubuntu-latest
     steps:
