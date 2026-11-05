@@ -184,7 +184,7 @@ func TestSeatbeltHandsNothingOffWhenTheNetworkIsConfined(t *testing.T) {
 		{Enforce: true, State: Tainted},
 	} {
 		out := mustCompile(t, p, c)
-		for _, want := range []string{`(global-name-regex #"^com\.apple\.coreservices\.")`, `(literal "/usr/bin/osascript")`, "(deny process-exec"} {
+		for _, want := range []string{`(global-name-regex #"^com\.apple\.(coreservices|lsd)\.")`, `(literal "/usr/bin/osascript")`, "(deny process-exec"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("%s/%s: profile lacks %s", p.State, p.Network, want)
 			}

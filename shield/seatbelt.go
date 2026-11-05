@@ -125,12 +125,13 @@ var keychainServices = []string{"com.apple.SecurityServer", "com.apple.securityd
 
 // handOffServices and handOffTools give another app something to do outside
 // the jail: `open https://…` asks LaunchServices to start the browser, and an
-// AppleScript can tell Finder to open a location. Either sends what a command
-// read past a confined network, so both go wherever the network does. Measured
-// on macOS 26: git, xcrun, security, go, swift, brew, python, node and docker
-// all work without them. A program that sends Apple events itself, not
-// through these tools, still can.
-var handOffServices = `^com\.apple\.coreservices\.`
+// AppleScript, run by osascript or inside any program, can tell Finder to
+// open a location. Either sends what a command read past a confined network,
+// so both go wherever the network does. Measured on macOS 26: with
+// LaunchServices' and lsd's services denied, an in-process AppleScript to
+// Finder fails, and git, xcrun, security, codesign, plutil, defaults, go,
+// swift, brew, python, node, npm, make and docker all work.
+var handOffServices = `^com\.apple\.(coreservices|lsd)\.`
 
 var handOffTools = []string{"/usr/bin/osascript", "/usr/bin/automator", "/usr/bin/shortcuts"}
 
