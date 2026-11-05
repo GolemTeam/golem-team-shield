@@ -180,14 +180,38 @@ func TestBaselineGrantsCloudButNeverKeysOrGolem(t *testing.T) {
 	}
 }
 
-// Claude Code's project settings override the user's env, so a command that
-// could write them could point the next command's shell anywhere.
-func TestWorkspaceClaudeSettingsAreUnwritable(t *testing.T) {
+// Claude Code's project settings override the user's env, and the agents'
+// project hooks and MCP servers run outside the jail, so a command that could
+// write them could run anything at the agent's next call.
+func TestWorkspaceAgentFilesAreUnwritable(t *testing.T) {
 	f := newFakeHome(t)
+	write(t, filepath.Join(f.ws, ".cursor", "rules", "style.md"), "")
+	write(t, filepath.Join(f.ws, ".github", "workflows", "ci.yml"), "")
 	for _, state := range []State{Clean, Tainted} {
-		script := "mkdir -p " + f.ws + "/.claude && echo '{}' > " + f.ws + "/.claude/settings.json"
-		if jailed(t, Policy{Enforce: true, State: state}, f.context(), script) {
-			t.Errorf("%s: wrote the workspace's Claude settings", state)
+		p := Policy{Enforce: true, State: state}
+		for _, script := range []string{
+			"mkdir -p " + f.ws + "/.claude && echo '{}' > " + f.ws + "/.claude/settings.json",
+			"echo '{}' > " + f.ws + "/.cursor/hooks.json",
+			"echo '{}' > " + f.ws + "/.mcp.json",
+			"mkdir -p " + f.ws + "/.codex && echo x > " + f.ws + "/.codex/config.toml",
+			"mkdir -p " + f.ws + "/.agents",
+			"mkdir -p " + f.ws + "/.github/hooks",
+			"mkdir -p " + f.ws + "/.devin",
+			"mkdir " + f.ws + "/x && echo '{}' > " + f.ws + "/x/hooks.json && mv " + f.ws + "/x " + f.ws + "/.gemini",
+			"mv " + f.ws + "/.cursor " + f.ws + "/cursor-was",
+		} {
+			if jailed(t, p, f.context(), script) {
+				t.Errorf("%s: %s", state, script)
+			}
+		}
+		for _, script := range []string{
+			"echo x > " + f.ws + "/.cursor/rules/style.md",
+			"echo x > " + f.ws + "/.github/workflows/ci.yml",
+			"mkdir -p " + f.ws + "/src/" + string(state) + " && echo x > " + f.ws + "/new-" + string(state),
+		} {
+			if !jailed(t, p, f.context(), script) {
+				t.Errorf("%s: ordinary work refused: %s", state, script)
+			}
 		}
 	}
 }

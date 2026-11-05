@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -149,10 +150,58 @@ var deviceWrites = []match{
 	absRx(`^/dev/fd/`),
 }
 
-// workspaceSettings would let a command re-point the agent's shell: Claude
-// Code's project settings override the user's env, CLAUDE_CODE_SHELL
-// included, and the work tree is otherwise writable.
-var workspaceSettings = []string{".claude/settings.json", ".claude/settings.local.json"}
+// workspaceSettings are the files in a work tree that an agent reads when it
+// starts or calls a tool, and that would let a command re-point its shell or
+// run something outside the jail: Claude Code's project settings, which
+// override the user's env, CLAUDE_CODE_SHELL included, and which Cursor,
+// Copilot CLI and Devin read too; and the project hooks and MCP servers of
+// the agents the jail attaches to (docs/design-local-shield.md, Project
+// files). workspaceSettingTrees are whole folders of them. The work tree is
+// otherwise writable.
+var workspaceSettings = []string{
+	".claude/settings.json", ".claude/settings.local.json", ".mcp.json",
+	".cursor/hooks.json", ".cursor/mcp.json",
+	".gemini/settings.json",
+	".devin/hooks.v1.json", ".devin/config.json", ".devin/config.local.json",
+	".devin/mcp_config.json", ".devin/mcp_config.local.json",
+	".github/copilot/settings.json", ".github/copilot/settings.local.json",
+	".codex/hooks.json", ".codex/config.toml",
+	".agents/hooks.json", ".agents/mcp_config.json",
+	".vscode/settings.json",
+}
+
+var workspaceSettingTrees = []string{".github/hooks"}
+
+// workspaceProtected is what a command may not write in the work tree ws:
+// each of those files and folders, and each folder on the way to one as an
+// entry of its own, so a folder of the command's making can't be renamed into
+// place with the files already in it.
+func workspaceProtected(ws string) []match {
+	var out []match
+	dirs := map[string]bool{}
+	note := func(p string) {
+		for d := filepath.Dir(p); d != "."; d = filepath.Dir(d) {
+			dirs[d] = true
+		}
+	}
+	for _, f := range workspaceSettings {
+		out = append(out, absLit(filepath.Join(ws, f)))
+		note(f)
+	}
+	for _, t := range workspaceSettingTrees {
+		out = append(out, absSub(filepath.Join(ws, t)))
+		note(t)
+	}
+	sorted := make([]string, 0, len(dirs))
+	for d := range dirs {
+		sorted = append(sorted, d)
+	}
+	sort.Strings(sorted)
+	for _, d := range sorted {
+		out = append(out, absLit(filepath.Join(ws, d)))
+	}
+	return out
+}
 
 // claudeCwdFile is where Claude Code has the shell record its cwd after every
 // command ($CLAUDE_CODE_TMPDIR or /tmp, claude-<id>-cwd).
@@ -194,9 +243,7 @@ func CompileSeatbelt(p Policy, c Context) (string, error) {
 
 	protected := append([]match{}, protectedWrites...)
 	for _, ws := range c.Workspace {
-		for _, f := range workspaceSettings {
-			protected = append(protected, absLit(filepath.Join(ws, f)))
-		}
+		protected = append(protected, workspaceProtected(ws)...)
 	}
 	w.paths("deny file-write*", home, protected)
 	w.paths("deny file-read* file-write*", home, append(append([]match{}, secretStores...), darwinAppStores...))

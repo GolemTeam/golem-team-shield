@@ -141,6 +141,32 @@ func TestProtectedDenialsFollowTheTaintedWriteFloor(t *testing.T) {
 	}
 }
 
+func TestTheAgentsProjectFilesAreDeniedAtTheWorkTreeRoot(t *testing.T) {
+	c := testContext()
+	c.Workspace = []string{"/Users/dev/src/app"}
+	out := mustCompile(t, Policy{Enforce: true, State: Clean}, c)
+	allow := strings.Index(out, "(allow file-write*")
+	ws := "/Users/dev/src/app/"
+	for _, want := range []string{
+		`(literal "` + ws + `.claude/settings.json")`, `(literal "` + ws + `.mcp.json")`,
+		`(literal "` + ws + `.cursor/hooks.json")`, `(literal "` + ws + `.cursor/mcp.json")`,
+		`(literal "` + ws + `.gemini/settings.json")`, `(literal "` + ws + `.devin/hooks.v1.json")`,
+		`(literal "` + ws + `.devin/config.local.json")`, `(literal "` + ws + `.github/copilot/settings.json")`,
+		`(subpath "` + ws + `.github/hooks")`, `(literal "` + ws + `.codex/config.toml")`,
+		`(literal "` + ws + `.agents/hooks.json")`, `(literal "` + ws + `.vscode/settings.json")`,
+		`(literal "` + ws + `.claude")`, `(literal "` + ws + `.cursor")`, `(literal "` + ws + `.github")`, `(literal "` + ws + `.github/copilot")`,
+	} {
+		if i := strings.LastIndex(out, want); i < allow {
+			t.Errorf("no deny after the allow for %s", want)
+		}
+	}
+	for _, never := range []string{`(subpath "` + ws + `.github")`, `(subpath "` + ws + `.cursor")`, `(literal "/Users/dev/src/app")`} {
+		if strings.Contains(out, never) {
+			t.Errorf("%s would stop ordinary work in the tree", never)
+		}
+	}
+}
+
 func TestContextIsValidated(t *testing.T) {
 	cases := map[string]Context{
 		"relative home":        {Home: "dev"},
