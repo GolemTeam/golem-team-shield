@@ -216,6 +216,38 @@ func TestWorkspaceAgentFilesAreUnwritable(t *testing.T) {
 	}
 }
 
+// An agent started below the root reads its own copies there, so from the
+// root down to where the command runs they are held too, and the folders on
+// the way can't be swapped; below it, a cloned repository's copies still
+// write.
+func TestWorkspaceAgentFilesAreHeldDownToTheWorkingDir(t *testing.T) {
+	f := newFakeHome(t)
+	deep := filepath.Join(f.ws, "svc", "api")
+	write(t, filepath.Join(deep, "main.go"), "")
+	c := f.context()
+	c.WorkingDir = deep
+	p := Policy{Enforce: true, State: Clean}
+	for _, script := range []string{
+		"mkdir -p " + f.ws + "/svc/.gemini",
+		"mkdir -p " + deep + "/.devin && echo '{}' > " + deep + "/.devin/hooks.v1.json",
+		"echo x > " + deep + "/.codex/config.toml",
+		"mv " + f.ws + "/svc " + f.ws + "/svc-was",
+		"mkdir " + f.ws + "/x && mv " + deep + " " + f.ws + "/x/api",
+	} {
+		if jailed(t, p, c, script) {
+			t.Errorf("%s", script)
+		}
+	}
+	for _, script := range []string{
+		"mkdir -p " + deep + "/vendor/lib/.gemini && echo '{}' > " + deep + "/vendor/lib/.gemini/settings.json",
+		"echo x > " + deep + "/main.go && mkdir -p " + deep + "/internal",
+	} {
+		if !jailed(t, p, c, script) {
+			t.Errorf("ordinary work refused: %s", script)
+		}
+	}
+}
+
 func TestTaintedStillWritesClaudeCodesCwdFile(t *testing.T) {
 	f := newFakeHome(t)
 	c := f.context()
