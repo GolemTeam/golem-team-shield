@@ -72,39 +72,56 @@ func (s *shim) jailed(rec *shield.RunRecord, p shield.Policy, tmp string, argv, 
 	if p.ConfinedWrites() {
 		rec.Writes = string(shield.WritesWorkspace)
 	}
-	if j.Proxy == 0 {
-		code, _, err := s.stage(stageSpec{Jail: j}, argv, env)
-		rec.ExitCode = code
-		return err == nil
+	launcher := profiledLauncher()
+	canNamespace := !s.noNamespace && (launcher != "" || !userNSRestricted() || os.Geteuid() == 0)
+	if canNamespace {
+		makeClaudeFolders(c.Workspace)
 	}
+	plan, _ := planProjectMounts(projectPaths(c), c.Workspace, workingFolders(c))
 	code, mode, err := 0, shield.NetMode(""), errNoNamespace
-	if !s.noNamespace {
-		code, mode, err = s.stage(stageSpec{Jail: j, Namespace: true, launcher: profiledLauncher()}, argv, env)
+	held := false
+	if canNamespace && (j.Proxy > 0 || len(plan.Binds) > 0) {
+		spec := stageSpec{Jail: j, Namespace: true, Net: j.Proxy > 0, Mounts: plan, launcher: launcher}
+		code, mode, err = s.stage(spec, argv, env)
+		held = err == nil && len(plan.Binds) > 0
 	}
 	if errors.Is(err, errNoNamespace) {
 		code, mode, err = s.stage(stageSpec{Jail: j}, argv, env)
 	}
 	rec.ExitCode, rec.Net = code, mode
+	if held {
+		rec.Files = shield.FilesHeld
+	}
 	return err == nil
 }
 
 // stageSpec is what the shim tells its jail stage on fd 3.
 type stageSpec struct {
-	Jail      shield.LinuxJail `json:"jail"`
-	Namespace bool             `json:"namespace,omitempty"`
+	Jail shield.LinuxJail `json:"jail"`
+	// Namespace puts the stage in its own user and mount namespace, with
+	// Mounts bound there; Net adds a network namespace for the proxy.
+	Namespace bool      `json:"namespace,omitempty"`
+	Net       bool      `json:"net,omitempty"`
+	Mounts    mountPlan `json:"mounts,omitempty"`
 	launcher  string
 }
 
 const (
 	stageCtlFD = 4
-	// The stage's one word on fd 4 for an allowlisted network.
+	// The stage's one word on fd 4, before it runs anything.
 	ctlNamespace    = 'n' // in a namespace; the proxy's listener comes with it
+	ctlHeld         = 'h' // in a namespace with no proxy
 	ctlLandlockPort = 'p'
 	ctlNoNetwork    = 'x'
 	ctlRetry        = 'r' // no namespace after all; nothing ran
 )
 
-var errNoNamespace = errors.New("no network namespace")
+var errNoNamespace = errors.New("no namespace")
+
+const (
+	launcherNet   = "--net"
+	launcherNoNet = "--no-net"
+)
 
 // stage runs the jail stage once and reports how it held the network.
 func (s *shim) stage(spec stageSpec, argv, env []string) (int, shield.NetMode, error) {
@@ -122,11 +139,15 @@ func (s *shim) stage(spec stageSpec, argv, env []string) (int, shield.NetMode, e
 	cmd.Args = append([]string{jailStage}, argv...)
 	if spec.launcher != "" {
 		cmd = exec.Command(spec.launcher)
-		cmd.Args = append([]string{jailLauncher}, argv...)
+		netFlag := launcherNoNet
+		if spec.Net {
+			netFlag = launcherNet
+		}
+		cmd.Args = append([]string{jailLauncher, netFlag}, argv...)
 	}
 	cmd.ExtraFiles = []*os.File{r}
 	var ctl *os.File
-	if spec.Jail.Proxy > 0 {
+	if spec.Jail.Proxy > 0 || spec.Namespace {
 		fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_SEQPACKET|unix.SOCK_CLOEXEC, 0)
 		if err != nil {
 			return 0, "", err
@@ -138,7 +159,7 @@ func (s *shim) stage(spec stageSpec, argv, env []string) (int, shield.NetMode, e
 		cmd.ExtraFiles = append(cmd.ExtraFiles, child)
 	}
 	if spec.Namespace && spec.launcher == "" {
-		cmd.SysProcAttr = namespaceAttr()
+		cmd.SysProcAttr = namespaceAttr(spec.Net)
 	}
 	modes := make(chan byte, 1)
 	code, err := s.tryStart(cmd, env, func() {
@@ -171,6 +192,8 @@ func (s *shim) stage(spec stageSpec, argv, env []string) (int, shield.NetMode, e
 	switch mode {
 	case ctlNamespace:
 		return code, shield.NetNamespace, nil
+	case ctlHeld:
+		return code, "", nil
 	case ctlLandlockPort:
 		return code, shield.NetLandlockPort, nil
 	case ctlNoNetwork:
@@ -179,15 +202,24 @@ func (s *shim) stage(spec stageSpec, argv, env []string) (int, shield.NetMode, e
 		if spec.Namespace {
 			return 0, "", errNoNamespace
 		}
+	case 0:
+		if spec.Namespace {
+			return 0, "", errNoNamespace
+		}
 	}
 	return code, "", nil
 }
 
-// namespaceAttr puts the stage in a new user, network and mount namespace.
-func namespaceAttr() *syscall.SysProcAttr {
+// namespaceAttr puts the stage in a new user and mount namespace, and a
+// network namespace when net is set.
+func namespaceAttr(net bool) *syscall.SysProcAttr {
 	uid, gid := os.Getuid(), os.Getgid()
+	flags := uintptr(syscall.CLONE_NEWUSER | syscall.CLONE_NEWNS)
+	if net {
+		flags |= syscall.CLONE_NEWNET
+	}
 	return &syscall.SysProcAttr{
-		Cloneflags:  syscall.CLONE_NEWUSER | syscall.CLONE_NEWNET | syscall.CLONE_NEWNS,
+		Cloneflags:  flags,
 		UidMappings: []syscall.SysProcIDMap{{ContainerID: uid, HostID: uid, Size: 1}},
 		GidMappings: []syscall.SysProcIDMap{{ContainerID: gid, HostID: gid, Size: 1}},
 		// The stage runs as the user, not root, in its namespace, so it
@@ -295,6 +327,11 @@ func applyJailStage(argv []string) error {
 		return err
 	}
 	j := spec.Jail
+	if spec.Namespace {
+		if err := holdFiles(spec); err != nil {
+			return err
+		}
+	}
 	inet, netPort := shield.InetOpen, 0
 	if j.Proxy > 0 {
 		if inet, netPort, err = holdNetwork(spec); err != nil {
@@ -316,6 +353,27 @@ func applyJailStage(argv []string) error {
 		}
 	}
 	return syscall.Exec(argv[0], argv, os.Environ())
+}
+
+// holdFiles makes the namespace's mounts its own and binds the project
+// files. If it can't, nothing has run, and the shim runs the stage again
+// without a namespace. Without a proxy to hand over, it tells the shim here.
+func holdFiles(spec stageSpec) error {
+	retry := func() {
+		ctl := os.NewFile(stageCtlFD, "stage-ctl")
+		_, _ = ctl.Write([]byte{ctlRetry})
+		os.Exit(stageRetryExit)
+	}
+	if unix.Mount("", "/", "", unix.MS_REC|unix.MS_PRIVATE, "") != nil || applyMountPlan(spec.Mounts) != nil {
+		retry()
+	}
+	if spec.Jail.Proxy > 0 {
+		return nil
+	}
+	ctl := os.NewFile(stageCtlFD, "stage-ctl")
+	defer ctl.Close()
+	_, err := ctl.Write([]byte{ctlHeld})
+	return err
 }
 
 // holdNetwork confines an allowlisted command to the proxy and tells the shim
@@ -397,9 +455,6 @@ func namespaceProxyListener(port int) (int, error) {
 var resolverDirs = []string{"/run/systemd/resolve", "/run/nscd", "/var/run/nscd", "/run/dbus"}
 
 func hideResolvers() {
-	if unix.Mount("", "/", "", unix.MS_REC|unix.MS_PRIVATE, "") != nil {
-		return
-	}
 	for _, d := range resolverDirs {
 		if fi, err := os.Stat(d); err == nil && fi.IsDir() {
 			_ = unix.Mount("tmpfs", d, "tmpfs", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, "size=4k,mode=0755")

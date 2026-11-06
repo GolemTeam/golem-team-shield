@@ -256,10 +256,14 @@ func goBuildID(path string) ([]byte, error) {
 // make, and wait for it. If it can't, nothing ran, and it tells the shim so.
 func runJailLauncher(args []string) int {
 	spec, ctl := os.NewFile(jailSpecFD, "jail-spec"), os.NewFile(stageCtlFD, "stage-ctl")
+	if len(args) == 0 || (args[0] != launcherNet && args[0] != launcherNoNet) {
+		_, _ = ctl.Write([]byte{ctlRetry})
+		return stageRetryExit
+	}
 	cmd := exec.Command("/proc/self/exe")
-	cmd.Args = append([]string{jailStage}, args...)
+	cmd.Args = append([]string{jailStage}, args[1:]...)
 	cmd.ExtraFiles = []*os.File{spec, ctl}
-	cmd.SysProcAttr = namespaceAttr()
+	cmd.SysProcAttr = namespaceAttr(args[0] == launcherNet)
 	l := &shim{stdin: os.Stdin, stdout: os.Stdout, stderr: os.Stderr}
 	code, err := l.tryStart(cmd, os.Environ(), func() {
 		spec.Close()

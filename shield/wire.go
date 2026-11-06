@@ -70,4 +70,9 @@ type RunRecord struct {
 	Net            NetMode        `json:"net,omitempty"`
 	Egress         []EgressRecord `json:"egress,omitempty"`
 	EgressOverflow int            `json:"egress_overflow,omitempty"`
+	// Files is "held" when the agents' project files were bound read-only in
+	// the command's mount namespace (Linux).
+	Files string `json:"files,omitempty"`
 }
+
+const FilesHeld = "held"

@@ -476,3 +476,110 @@ func TestLinuxProfiledLauncherHandsTheCommandNothing(t *testing.T) {
 		t.Errorf("runs %+v", w.runs)
 	}
 }
+
+func TestLinuxProjectMountPlanKeepsWorkingFoldersWritable(t *testing.T) {
+	root := t.TempDir()
+	for _, f := range []string{".claude/settings.json", ".cursor/rules/r.md", ".github/workflows/ci.yml", ".github/hooks/a.json", "src/main.go"} {
+		plant(t, filepath.Join(root, f), "x")
+	}
+	c := shield.Context{Workspace: []string{root}, WorkingDir: filepath.Join(root, "src")}
+	plan, unheld := planProjectMounts(projectPaths(c), c.Workspace, workingFolders(c))
+	ro, rw := map[string]bool{}, map[string]bool{}
+	for _, b := range plan.Binds {
+		if b.ReadOnly {
+			ro[strings.TrimPrefix(b.Path, root+"/")] = true
+		} else {
+			rw[strings.TrimPrefix(b.Path, root+"/")] = true
+		}
+	}
+	for _, want := range []string{".claude/settings.json", ".github/hooks", ".cursor", ".github", ".claude"} {
+		if !ro[want] {
+			t.Errorf("%s isn't bound read-only: ro %v", want, ro)
+		}
+	}
+	for _, want := range []string{".cursor/rules", ".github/workflows", "src"} {
+		if !rw[want] {
+			t.Errorf("%s isn't bound writable: rw %v", want, rw)
+		}
+	}
+	for _, never := range []string{"", "src"} {
+		if ro[never] {
+			t.Errorf("%q, where people work, is bound read-only", never)
+		}
+	}
+	missing := map[string]bool{}
+	for _, p := range unheld {
+		missing[strings.TrimPrefix(p.Path, root+"/")] = true
+	}
+	for _, want := range []string{".mcp.json", ".gemini/settings.json", "src/.mcp.json", "src/.codex/config.toml"} {
+		if !missing[want] {
+			t.Errorf("%s is neither held nor left for the check: %v", want, missing)
+		}
+	}
+}
+
+func TestLinuxProjectFilesAreHeld(t *testing.T) {
+	s, w, out := linuxShim(t, shield.Policy{Enforce: true, State: shield.Clean, Grants: shield.AllGrants()})
+	for f, body := range map[string]string{
+		".claude/settings.json": "ORIG", ".claude/notes.md": "n", ".cursor/rules/r.md": "r",
+		".github/hooks/a.json": "ORIG", ".github/workflows/ci.yml": "ci",
+	} {
+		plant(t, filepath.Join(s.cwd, f), body)
+	}
+	script := `echo X > .claude/settings.json && echo W1; mv .claude c2 && echo W2; rm -f .claude/settings.json && echo W3;` +
+		` mkdir y && echo X > y/settings.json; mv -T y .claude 2>/dev/null && echo W4;` +
+		` echo X > .cursor/hooks.json && echo W5; echo ok > .cursor/rules/r2.md && echo OK1;` +
+		` echo X > .github/hooks/a.json && echo W6; echo X > .github/hooks/b.json && echo W7;` +
+		` mkdir .github/copilot && echo W8; echo ok >> .github/workflows/ci.yml && echo OK2;` +
+		` echo ok > .claude/notes.md && echo OK3; touch newfile && echo OK4; true`
+	s.run("/bin/bash", []string{"-c", script})
+	if len(w.runs) != 1 || w.runs[0].Files != shield.FilesHeld {
+		if os.Getenv("GOLEM_EXEC_EXPECT_NAMESPACE") == "1" {
+			t.Fatalf("expected the files held, runs %+v", w.runs)
+		}
+		t.Skipf("no namespace here (runs %+v)", w.runs)
+	}
+	got := out.String()
+	for _, bad := range []string{"W1", "W2", "W3", "W4", "W5", "W6", "W7", "W8"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("%s got through: %s", bad, got)
+		}
+	}
+	for _, ok := range []string{"OK1", "OK2", "OK3", "OK4"} {
+		if !strings.Contains(got, ok) {
+			t.Errorf("%s, ordinary work, was refused: %s", ok, got)
+		}
+	}
+	for f, want := range map[string]string{".claude/settings.json": "ORIG", ".github/hooks/a.json": "ORIG"} {
+		if b, _ := os.ReadFile(filepath.Join(s.cwd, f)); string(b) != want {
+			t.Errorf("%s now holds %q", f, b)
+		}
+	}
+	for _, f := range []string{".cursor/hooks.json", ".github/hooks/b.json", ".github/copilot"} {
+		if _, err := os.Stat(filepath.Join(s.cwd, f)); err == nil {
+			t.Errorf("%s was created", f)
+		}
+	}
+}
+
+// A work tree without .claude gets one, held, so a command can't make
+// Claude Code's settings there.
+func TestLinuxMissingClaudeFolderIsMadeAndHeld(t *testing.T) {
+	s, w, out := linuxShim(t, shield.Policy{Enforce: true, State: shield.Clean, Grants: shield.AllGrants()})
+	script := `mkdir -p .claude; echo X > .claude/settings.json && echo W1; rmdir .claude && echo W2; touch newfile && echo OK1; true`
+	s.run("/bin/bash", []string{"-c", script})
+	if len(w.runs) != 1 || w.runs[0].Files != shield.FilesHeld {
+		if os.Getenv("GOLEM_EXEC_EXPECT_NAMESPACE") == "1" {
+			t.Fatalf("expected the files held, runs %+v", w.runs)
+		}
+		t.Skipf("no namespace here (runs %+v)", w.runs)
+	}
+	got := out.String()
+	if strings.Contains(got, "W1") || strings.Contains(got, "W2") || !strings.Contains(got, "OK1") {
+		t.Errorf("output: %s", got)
+	}
+	entries, err := os.ReadDir(filepath.Join(s.cwd, ".claude"))
+	if err != nil || len(entries) != 0 {
+		t.Errorf(".claude: %v %v", entries, err)
+	}
+}
