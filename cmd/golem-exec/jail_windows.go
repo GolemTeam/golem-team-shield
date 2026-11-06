@@ -71,6 +71,9 @@ func (s *shim) jailed(rec *shield.RunRecord, p shield.Policy, tmp string, argv, 
 	if err != nil {
 		return false
 	}
+	for _, d := range j.Hold {
+		_ = os.Mkdir(d, 0o755)
+	}
 	if err := applyDenies(j, sid); err != nil {
 		return false
 	}

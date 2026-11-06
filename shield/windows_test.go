@@ -151,3 +151,70 @@ func TestWindowsWorkspaceWritesRunAtLowIntegrity(t *testing.T) {
 		t.Error("the policy hash doesn't tell the two apart")
 	}
 }
+
+func TestWindowsHoldsTheAgentsProjectFiles(t *testing.T) {
+	tr := newLLTree(t)
+	for _, f := range []string{".claude/settings.json", ".claude/commands/x.md", ".mcp.json", ".github/workflows/ci.yml", "sub/main.go"} {
+		plantFile(t, filepath.Join(tr.ws, f))
+	}
+	c := tr.context()
+	c.WorkingDir = filepath.Join(tr.ws, "sub")
+	for _, p := range []Policy{{Enforce: true, State: Clean, Grants: AllGrants()}, {Enforce: true, State: Clean, Grants: AllGrants(), Writes: WritesWorkspace}} {
+		j, err := CompileWindows(p, c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w := func(rel string) (WindowsACE, bool) { return winDeny(j, filepath.Join(tr.ws, rel)) }
+		for _, f := range []string{".claude/settings.json", ".mcp.json"} {
+			if e, ok := w(f); !ok || e.Deny&WinDenyWrite != WinDenyWrite || e.Deny&WinDenyRead != 0 {
+				t.Errorf("%s: %+v", f, e)
+			}
+		}
+		if e, ok := w(".claude"); !ok || e.Deny&winDenyEntry != winDenyEntry || e.Deny&winWriteData == 0 || e.Deny&winAppendData != 0 || e.Inherit {
+			t.Errorf(".claude should stay in place and refuse new files, settings.local.json being missing: %+v", e)
+		}
+		if e, ok := w(".github"); !ok || e.Deny&winDenyEntry != winDenyEntry || e.Deny&winAppendData == 0 || e.Deny&winWriteData != 0 {
+			t.Errorf(".github should stay in place and refuse new folders, hooks and copilot being missing: %+v", e)
+		}
+		if e, ok := w(""); !ok || e.Deny&winDeleteChild == 0 || e.Deny&(winWriteData|winAppendData|winDelete) != 0 || e.Inherit {
+			t.Errorf("the root should refuse removing entries through it, and nothing else: %+v", e)
+		}
+		if e, ok := w("sub"); !ok || e.Deny&winDenyEntry != winDenyEntry || e.Deny&(winWriteData|winAppendData) != 0 {
+			t.Errorf("the folder on the way to the working directory should stay in place: %+v", e)
+		}
+		for _, free := range []string{".github/workflows", ".github/workflows/ci.yml", ".claude/commands", ".cursor", "sub/main.go"} {
+			if e, ok := w(free); ok {
+				t.Errorf("%s would stop ordinary work: %+v", free, e)
+			}
+		}
+		if len(j.Hold) != 0 {
+			t.Errorf("held %v though .claude is there", j.Hold)
+		}
+	}
+}
+
+func TestWindowsMakesTheWorkTreesClaudeFolderToHoldIt(t *testing.T) {
+	tr := newLLTree(t)
+	c := tr.context()
+	j, err := CompileWindows(Policy{Enforce: true, State: Clean, Grants: AllGrants()}, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claude := filepath.Join(tr.ws, ".claude")
+	if len(j.Hold) != 1 || j.Hold[0] != claude {
+		t.Fatalf("hold %v", j.Hold)
+	}
+	if e, ok := winDeny(j, claude); !ok || e.Deny&winDenyEntry != winDenyEntry || e.Deny&winWriteData == 0 {
+		t.Errorf(".claude: %+v", e)
+	}
+	if e, ok := winDeny(j, tr.ws); !ok || e.Deny&winDeleteChild == 0 {
+		t.Errorf("root: %+v", e)
+	}
+	if _, ok := winDeny(j, filepath.Join(tr.ws, ".cursor")); ok {
+		t.Error("a missing folder at the root was guarded")
+	}
+	c.Workspace = []string{filepath.Join(tr.root, "outside")}
+	if j, _ := CompileWindows(Policy{Enforce: true, State: Clean, Grants: AllGrants()}, c); len(j.Hold) != 0 {
+		t.Errorf("made a folder in a workspace that is no work tree: %v", j.Hold)
+	}
+}

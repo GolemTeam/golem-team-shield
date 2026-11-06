@@ -3,6 +3,7 @@ package main
 import (
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -208,5 +209,105 @@ func TestWindowsFirewallHoldsOnlyAnAllowlistedShell(t *testing.T) {
 	out, rec = run(shield.Policy{Enforce: true, State: shield.Clean, Grants: shield.AllGrants(), Writes: shield.WritesWorkspace})
 	if rec.Writes != "workspace" || !strings.Contains(out, "DIRECT") || !strings.Contains(out, "PUBLIC") {
 		t.Errorf("the filters held a low-integrity process they don't mark (writes %q): %s", rec.Writes, out)
+	}
+}
+
+func gitRepo(t *testing.T, dir string, files ...string) {
+	t.Helper()
+	for _, f := range files {
+		p := filepath.Join(dir, filepath.FromSlash(f))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("orig\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if out, err := exec.Command("git", "init", "-q", dir).CombinedOutput(); err != nil {
+		t.Skipf("no git here: %v %s", err, out)
+	}
+}
+
+func TestWindowsJailHoldsTheAgentsProjectFiles(t *testing.T) {
+	bash := gitBash(t)
+	for _, writes := range []shield.Writes{"", shield.WritesWorkspace} {
+		t.Run("writes="+string(writes), func(t *testing.T) {
+			w := newFakeWitness(t, shield.Policy{Enforce: true, State: shield.Clean, Grants: shield.AllGrants(), Writes: writes})
+			s, stdout, stderr := testShim(t, w.URL)
+			repo := filepath.Join(s.cwd, "repo")
+			bare := filepath.Join(s.cwd, "bare")
+			gitRepo(t, repo, ".claude/settings.json", ".claude/commands/c.md", ".mcp.json", ".github/workflows/ci.yml", "README.md")
+			gitRepo(t, bare, "main.go")
+			temp := t.TempDir()
+			if err := os.MkdirAll(s.home, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			s.env = append(s.env, "SYSTEMROOT="+os.Getenv("SYSTEMROOT"), "TEMP="+temp, "TMP="+temp,
+				"PATH=/mingw64/bin:/clangarm64/bin:/usr/bin:/bin")
+			s.cwd = repo
+			t.Chdir(repo)
+			script := `echo x > .claude/commands/new.md && echo O6
+echo evil > .claude/settings.json && echo W1
+echo evil > .claude/settings.local.json && echo W2
+mv .claude c2 && echo W3
+rm -rf .claude && echo W4
+echo evil > .mcp.json && echo W5
+rm -f .mcp.json && echo W6
+echo evil > evil.json; mv -f evil.json .mcp.json && echo W7
+mkdir -p .github/hooks && echo W8
+MSYS_NO_PATHCONV=1 icacls .claude /reset >/dev/null 2>&1 && echo W9
+echo x > new.txt && echo O1
+mkdir newdir && echo O2
+rm README.md && echo O3
+echo x > .github/workflows/new.yml && echo O4
+echo x >> .github/workflows/ci.yml && echo O5
+git add -A && git -c user.name=t -c user.email=t@example.com commit -qm x && echo O7
+exit 0`
+			if code := s.run(bash, []string{"-c", script}); code != 0 {
+				t.Fatalf("exit %d: %s / %s", code, stdout.String(), stderr.String())
+			}
+			out := stdout.String()
+			for i := 1; i <= 9; i++ {
+				if strings.Contains(out, "W"+strconv.Itoa(i)+"\n") {
+					t.Errorf("W%d got through: %s", i, out)
+				}
+			}
+			for i := 1; i <= 7; i++ {
+				if !strings.Contains(out, "O"+strconv.Itoa(i)+"\n") {
+					t.Errorf("ordinary work O%d failed: %s / %s", i, out, stderr.String())
+				}
+			}
+			for _, f := range []string{".claude/settings.json", ".mcp.json"} {
+				if b, err := os.ReadFile(filepath.Join(repo, f)); err != nil || string(b) != "orig\n" {
+					t.Errorf("%s changed: %q %v", f, b, err)
+				}
+			}
+			for _, f := range []string{".claude/settings.local.json", ".github/hooks", "c2"} {
+				if _, err := os.Lstat(filepath.Join(repo, f)); err == nil {
+					t.Errorf("%s was made", f)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(repo, ".claude", "settings.json"), []byte("mine\n"), 0o644); err != nil {
+				t.Errorf("the person's own tools lost the file: %v", err)
+			}
+
+			stdout.Reset()
+			s.cwd = bare
+			t.Chdir(bare)
+			script = `mkdir -p x && echo '{}' > x/settings.json && mv x .claude/ 2>/dev/null; echo evil > .claude/settings.json && echo H1
+rmdir .claude && echo H2
+echo x > new.txt && mkdir d && echo O1
+exit 0`
+			if code := s.run(bash, []string{"-c", script}); code != 0 {
+				t.Fatalf("exit %d: %s / %s", code, stdout.String(), stderr.String())
+			}
+			out = stdout.String()
+			if strings.Contains(out, "H1") || strings.Contains(out, "H2") || !strings.Contains(out, "O1") {
+				t.Errorf("a missing .claude wasn't held: %s / %s", out, stderr.String())
+			}
+			if _, err := os.Stat(filepath.Join(bare, ".claude", "settings.json")); err == nil {
+				t.Error(".claude/settings.json was made")
+			}
+		})
 	}
 }

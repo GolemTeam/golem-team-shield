@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -42,6 +44,9 @@ const (
 	winDenyNewFile = winWriteData | winDeleteChild | winDelete | winWriteDAC | winWriteOwner
 	winDenyCreate  = winDenyNewFile | winAppendData
 	winDenyKey     = keySetValue | keyCreateSubKey | winDelete | winWriteDAC | winWriteOwner
+	// winDenyEntry keeps a folder where it is: it can't be removed or
+	// renamed, nor anything in it through it. What is in it stays writable.
+	winDenyEntry = winDelete | winDeleteChild | winWriteDAC | winWriteOwner
 )
 
 // WindowsACE is a deny entry for the shield's SID that the shim keeps on one
@@ -78,6 +83,9 @@ type WindowsJail struct {
 	// deny entries can't express.
 	LowIntegrity bool     `json:"low_integrity,omitempty"`
 	LowRoots     []string `json:"low_roots,omitempty"`
+	// Hold are folders the shim makes before the command runs, so that the
+	// entries on them can keep the agents' project files from being created.
+	Hold []string `json:"hold,omitempty"`
 	// Firewalled puts ShieldNetSIDString in the shell's restricting SIDs, so
 	// the shield's firewall filters, where installed, hold its network to the
 	// proxy.
@@ -202,8 +210,9 @@ func CompileWindows(p Policy, c Context) (WindowsJail, error) {
 		place(append(append([]match{}, linuxAgentStores[:1]...), windowsAgentStores...), WinDenyRead|WinDenyWrite)
 	}
 	add(c.Home, winDenyCreate, false)
+	hold := projectDenies(c, add)
 
-	j := WindowsJail{}
+	j := WindowsJail{Hold: hold}
 	for _, e := range acl {
 		j.Files = append(j.Files, e)
 	}
@@ -224,6 +233,62 @@ func CompileWindows(p Policy, c Context) (WindowsJail, error) {
 		}
 	}
 	return j, nil
+}
+
+// projectDenies keeps the agents' project files (ProjectFilePaths) from the
+// command. An entry on a file or folder can't stop it being removed or
+// renamed through its parent, which FILE_DELETE_CHILD there allows whatever
+// the entry says, so each parent refuses that too; the files beside them are
+// still removed through their own DELETE. A missing one makes its folder
+// refuse new files, or new folders, except at a root (the work tree's, or a
+// folder on the way to the working directory), where that would stop
+// ordinary work. The work tree's .claude, which Claude Code, Cursor, Copilot
+// CLI, VS Code's agent and Devin all read, is made when missing so that it
+// can be held; the other folders missing at a root are not held.
+func projectDenies(c Context, add func(string, uint32, bool)) []string {
+	var hold []string
+	held := map[string]bool{}
+	for _, ws := range c.Workspace {
+		ws = filepath.Clean(ws)
+		claude := filepath.Join(ws, ".claude")
+		if _, err := os.Lstat(filepath.Join(ws, ".git")); err != nil {
+			continue
+		}
+		if _, err := os.Lstat(claude); errors.Is(err, fs.ErrNotExist) && !held[claude] {
+			held[claude] = true
+			hold = append(hold, claude)
+		}
+	}
+	roots := map[string]bool{}
+	for _, r := range projectRoots(c) {
+		roots[r] = true
+	}
+	present := func(p string) bool {
+		_, err := os.Lstat(p)
+		return err == nil || held[p]
+	}
+	guard := func(p string, deny uint32, inherit bool, missing uint32) {
+		parent := filepath.Dir(p)
+		switch {
+		case present(p):
+			add(p, deny, inherit)
+			add(parent, winDeleteChild|winWriteDAC|winWriteOwner, false)
+		case roots[parent] || !present(parent):
+		default:
+			add(parent, missing|winWriteDAC|winWriteOwner, false)
+		}
+	}
+	pp := ProjectFilePaths(c)
+	for _, f := range pp.Files {
+		guard(f, WinDenyWrite, false, winWriteData)
+	}
+	for _, t := range pp.Trees {
+		guard(t, WinDenyWrite, true, winAppendData)
+	}
+	for _, d := range pp.Folders {
+		guard(d, winDenyEntry, false, winAppendData)
+	}
+	return hold
 }
 
 // sshKeys lists the files in ~/.ssh that SSHReadable left out.
