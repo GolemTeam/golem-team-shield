@@ -292,21 +292,54 @@ exit 0`
 			}
 
 			stdout.Reset()
-			s.cwd = bare
-			t.Chdir(bare)
-			script = `mkdir -p x && echo '{}' > x/settings.json && mv x .claude/ 2>/dev/null; echo evil > .claude/settings.json && echo H1
-rmdir .claude && echo H2
-echo x > new.txt && mkdir d && echo O1
+			sub := filepath.Join(bare, "pkg", "sub")
+			if err := os.MkdirAll(sub, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			s.cwd = sub
+			t.Chdir(sub)
+			script = `mkdir -p x && echo '{}' > x/settings.json && mv x ../../.claude/ 2>/dev/null; echo evil > ../../.claude/settings.json && echo H1
+rmdir ../../.claude && echo H2
+echo '{}' > ../../.cursor/hooks.json && echo H3
+mv ../../.gemini ../../g2 && echo H4
+mkdir ../../.github/hooks && echo H5
+echo '{}' > .claude/settings.json && echo H6
+echo '{}' > .gemini/settings.json && echo H7
+echo '{}' > ../.codex/config.toml && echo H8
+rm -rf .vscode && echo H9
+echo x > new.txt && mkdir d && echo x > ../../new.txt && mkdir ../../d && echo O1
+rm -rf ../../.claude/x && echo O2
 exit 0`
 			if code := s.run(bash, []string{"-c", script}); code != 0 {
 				t.Fatalf("exit %d: %s / %s", code, stdout.String(), stderr.String())
 			}
 			out = stdout.String()
-			if strings.Contains(out, "H1") || strings.Contains(out, "H2") || !strings.Contains(out, "O1") {
-				t.Errorf("a missing .claude wasn't held: %s / %s", out, stderr.String())
+			for i := 1; i <= 9; i++ {
+				if strings.Contains(out, "H"+strconv.Itoa(i)+"\n") {
+					t.Errorf("H%d got through: %s / %s", i, out, stderr.String())
+				}
 			}
-			if _, err := os.Stat(filepath.Join(bare, ".claude", "settings.json")); err == nil {
-				t.Error(".claude/settings.json was made")
+			if !strings.Contains(out, "O1") || !strings.Contains(out, "O2") {
+				t.Errorf("ordinary work failed: %s / %s", out, stderr.String())
+			}
+			for _, d := range []string{"", "pkg", "pkg/sub"} {
+				for _, f := range []string{".claude", ".cursor", ".gemini", ".github", ".codex", ".devin", ".agents", ".vscode"} {
+					p := filepath.Join(bare, filepath.FromSlash(d), f)
+					if fi, err := os.Stat(p); err != nil || !fi.IsDir() {
+						t.Errorf("%s wasn't made to be held: %v", p, err)
+					}
+				}
+				if _, err := os.Lstat(filepath.Join(bare, filepath.FromSlash(d), ".mcp.json")); err == nil {
+					t.Errorf("a .mcp.json was made in %q", d)
+				}
+			}
+			for _, f := range []string{".claude/settings.json", ".cursor/hooks.json", ".github/hooks", "g2", "pkg/sub/.claude/settings.json", "pkg/sub/.gemini/settings.json", "pkg/.codex/config.toml"} {
+				if _, err := os.Lstat(filepath.Join(bare, filepath.FromSlash(f))); err == nil {
+					t.Errorf("%s was made", f)
+				}
+			}
+			if out, err := exec.Command("git", "-C", bare, "status", "--porcelain").CombinedOutput(); err != nil || strings.Contains(string(out), " .") || strings.Contains(string(out), "/.") {
+				t.Errorf("git lists the held folders: %v %s", err, out)
 			}
 		})
 	}

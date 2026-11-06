@@ -182,39 +182,56 @@ func TestWindowsHoldsTheAgentsProjectFiles(t *testing.T) {
 		if e, ok := w("sub"); !ok || e.Deny&winDenyEntry != winDenyEntry || e.Deny&(winWriteData|winAppendData) != 0 {
 			t.Errorf("the folder on the way to the working directory should stay in place: %+v", e)
 		}
-		for _, free := range []string{".github/workflows", ".github/workflows/ci.yml", ".claude/commands", ".cursor", "sub/main.go"} {
+		for _, free := range []string{".github/workflows", ".github/workflows/ci.yml", ".claude/commands", "sub/main.go", ".mcp.json/x"} {
 			if e, ok := w(free); ok {
 				t.Errorf("%s would stop ordinary work: %+v", free, e)
 			}
 		}
-		if len(j.Hold) != 0 {
-			t.Errorf("held %v though .claude is there", j.Hold)
+		held := map[string]bool{}
+		for _, h := range j.Hold {
+			held[h] = true
+		}
+		for _, rel := range []string{".cursor", ".vscode", "sub/.claude", "sub/.github", "sub/.gemini"} {
+			if !held[filepath.Join(tr.ws, rel)] {
+				t.Errorf("%s is missing and wasn't made to be held: %v", rel, j.Hold)
+			}
+		}
+		for _, rel := range []string{".claude", ".github", ".mcp.json", "sub/.mcp.json", "sub/main.go"} {
+			if held[filepath.Join(tr.ws, rel)] {
+				t.Errorf("%s was made", rel)
+			}
+		}
+		if e, ok := w(".cursor"); !ok || e.Deny&winDenyEntry != winDenyEntry || e.Deny&winWriteData == 0 {
+			t.Errorf("a made .cursor should stay in place and refuse new files: %+v", e)
 		}
 	}
 }
 
-func TestWindowsMakesTheWorkTreesClaudeFolderToHoldIt(t *testing.T) {
+func TestWindowsMakesTheMissingAgentFoldersToHoldThem(t *testing.T) {
 	tr := newLLTree(t)
 	c := tr.context()
 	j, err := CompileWindows(Policy{Enforce: true, State: Clean, Grants: AllGrants()}, c)
 	if err != nil {
 		t.Fatal(err)
 	}
-	claude := filepath.Join(tr.ws, ".claude")
-	if len(j.Hold) != 1 || j.Hold[0] != claude {
-		t.Fatalf("hold %v", j.Hold)
+	var want []string
+	for _, d := range []string{".agents", ".claude", ".codex", ".cursor", ".devin", ".gemini", ".github", ".vscode"} {
+		want = append(want, filepath.Join(tr.ws, d))
 	}
-	if e, ok := winDeny(j, claude); !ok || e.Deny&winDenyEntry != winDenyEntry || e.Deny&winWriteData == 0 {
+	if strings.Join(j.Hold, "|") != strings.Join(want, "|") {
+		t.Fatalf("hold %v, want %v", j.Hold, want)
+	}
+	if e, ok := winDeny(j, filepath.Join(tr.ws, ".claude")); !ok || e.Deny&winDenyEntry != winDenyEntry || e.Deny&winWriteData == 0 {
 		t.Errorf(".claude: %+v", e)
 	}
-	if e, ok := winDeny(j, tr.ws); !ok || e.Deny&winDeleteChild == 0 {
-		t.Errorf("root: %+v", e)
+	if e, ok := winDeny(j, filepath.Join(tr.ws, ".github")); !ok || e.Deny&winAppendData == 0 || e.Deny&winWriteData != 0 {
+		t.Errorf(".github should refuse new folders, not new files: %+v", e)
 	}
-	if _, ok := winDeny(j, filepath.Join(tr.ws, ".cursor")); ok {
-		t.Error("a missing folder at the root was guarded")
+	if e, ok := winDeny(j, tr.ws); !ok || e.Deny&winDeleteChild == 0 || e.Deny&(winWriteData|winAppendData) != 0 {
+		t.Errorf("root: %+v", e)
 	}
 	c.Workspace = []string{filepath.Join(tr.root, "outside")}
 	if j, _ := CompileWindows(Policy{Enforce: true, State: Clean, Grants: AllGrants()}, c); len(j.Hold) != 0 {
-		t.Errorf("made a folder in a workspace that is no work tree: %v", j.Hold)
+		t.Errorf("made folders in a workspace that is no work tree: %v", j.Hold)
 	}
 }

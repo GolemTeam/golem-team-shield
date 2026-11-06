@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 )
 
@@ -240,23 +241,34 @@ func CompileWindows(p Policy, c Context) (WindowsJail, error) {
 // renamed through its parent, which FILE_DELETE_CHILD there allows whatever
 // the entry says, so each parent refuses that too; the files beside them are
 // still removed through their own DELETE. A missing one makes its folder
-// refuse new files, or new folders, except at a root (the work tree's, or a
-// folder on the way to the working directory), where that would stop
-// ordinary work. The work tree's .claude, which Claude Code, Cursor, Copilot
-// CLI, VS Code's agent and Devin all read, is made when missing so that it
-// can be held; the other folders missing at a root are not held.
+// refuse new files, or new folders. At a root (the work tree's, or a folder
+// on the way to the working directory) that would stop ordinary work, so an
+// agent's folder missing there (.claude, .cursor, .github, …) is made, empty,
+// and held like any other. .mcp.json, the one file at a root, can't be: Claude
+// Code reports a folder in its place as a broken config. It still asks before
+// starting a server from it, and where it records the answer is held.
 func projectDenies(c Context, add func(string, uint32, bool)) []string {
+	var trees []string
+	for _, ws := range c.Workspace {
+		if _, err := os.Lstat(filepath.Join(ws, ".git")); err == nil {
+			trees = append(trees, filepath.Clean(ws))
+		}
+	}
 	var hold []string
 	held := map[string]bool{}
-	for _, ws := range c.Workspace {
-		ws = filepath.Clean(ws)
-		claude := filepath.Join(ws, ".claude")
-		if _, err := os.Lstat(filepath.Join(ws, ".git")); err != nil {
+	for _, r := range projectRoots(c) {
+		if !slices.ContainsFunc(trees, func(t string) bool { return within(r, t) }) {
 			continue
 		}
-		if _, err := os.Lstat(claude); errors.Is(err, fs.ErrNotExist) && !held[claude] {
-			held[claude] = true
-			hold = append(hold, claude)
+		for _, d := range projectFolders() {
+			p := filepath.Join(r, d)
+			if filepath.Dir(d) != "." || held[p] {
+				continue
+			}
+			if _, err := os.Lstat(p); errors.Is(err, fs.ErrNotExist) {
+				held[p] = true
+				hold = append(hold, p)
+			}
 		}
 	}
 	roots := map[string]bool{}
