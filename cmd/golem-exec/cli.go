@@ -30,6 +30,8 @@ const cliUsage = `usage: golem-exec <command>
   status               show what is installed and the policy commands get
   firewall install     on Windows, as administrator: hold an allowed-hosts network to its list
   firewall remove      take the shield's firewall filters out again
+  apparmor install     on Ubuntu, as root: let the jail make the network namespace an allowed-hosts list needs
+  apparmor remove      take golem-exec's AppArmor profile and its copy out again
   test                 check that the jail blocks what it should
   uninstall [--purge]  put the agents' shells back (--purge also removes ~/.golem/shield.json)
   version              print the version
@@ -57,6 +59,7 @@ type setup struct {
 	stderr     io.Writer
 	canJail    func() bool
 	firewallOn func() (bool, error)
+	appArmor   func(self string) appArmorState
 	agentRuns  func() bool
 	selfTest   func(shim, command string) (int, error)
 }
@@ -69,7 +72,7 @@ func newSetup(witness string) *setup {
 	}
 	s := &setup{
 		home: home, goos: runtime.GOOS, exe: exe, loginShell: os.Getenv("SHELL"), codexHome: os.Getenv("CODEX_HOME"), witness: witness,
-		stdin: os.Stdin, stdout: os.Stdout, stderr: os.Stderr, canJail: canJail, firewallOn: firewallInstalled, selfTest: runThroughShim,
+		stdin: os.Stdin, stdout: os.Stdout, stderr: os.Stderr, canJail: canJail, firewallOn: firewallInstalled, appArmor: appArmorStatus, selfTest: runThroughShim,
 	}
 	s.agentRuns = s.agentPresent
 	return s
@@ -98,6 +101,8 @@ func runCommand(s *setup, args []string) int {
 		return s.hook(args[1:])
 	case "firewall":
 		return s.firewall(args[1:])
+	case "apparmor":
+		return s.apparmor(args[1:])
 	case "test":
 		return s.test()
 	case "help", "-h", "--help":
@@ -457,8 +462,22 @@ func (s *setup) statusConfinement(p shield.Policy) {
 			fmt.Fprintln(s.stdout, "             run `golem-exec firewall install` as administrator to refuse the rest")
 		}
 	case "linux":
-		fmt.Fprintln(s.stdout, "             held by a network namespace, or where the kernel allows none, by Landlock's port rule,")
-		fmt.Fprintln(s.stdout, "             which lets a program that ignores the proxy reach any host on the proxy's port")
+		switch aa := s.appArmor(s.exe); {
+		case aa.Restricted && aa.Current:
+			fmt.Fprintln(s.stdout, "             held by a network namespace, which golem-exec's AppArmor profile lets the jail make")
+		case aa.Restricted:
+			fmt.Fprintln(s.stdout, "             held by Landlock's port rule, which lets a program that ignores the proxy reach any host")
+			fmt.Fprintln(s.stdout, "             on the proxy's port: AppArmor keeps user namespaces from programs it doesn't name.")
+			if aa.Installed {
+				fmt.Fprintln(s.stdout, "             The profile's copy of golem-exec is another build; after an upgrade, run again:")
+			} else {
+				fmt.Fprintln(s.stdout, "             To let the jail make its namespace, run:")
+			}
+			fmt.Fprintf(s.stdout, "             sudo %s apparmor install\n", s.exe)
+		default:
+			fmt.Fprintln(s.stdout, "             held by a network namespace, or where the kernel allows none, by Landlock's port rule,")
+			fmt.Fprintln(s.stdout, "             which lets a program that ignores the proxy reach any host on the proxy's port")
+		}
 	}
 }
 
@@ -535,6 +554,34 @@ func (s *setup) firewall(args []string) int {
 		fmt.Fprintln(s.stdout, "Installed the shield's firewall filters: an allowed-hosts network now refuses programs that ignore the proxy.")
 	} else {
 		fmt.Fprintln(s.stdout, "Removed the shield's firewall filters.")
+	}
+	return 0
+}
+
+// apparmor installs or removes golem-exec's AppArmor profile and the
+// root-owned copy it names (apparmor_linux.go).
+func (s *setup) apparmor(args []string) int {
+	if len(args) != 1 || (args[0] != "install" && args[0] != "remove") {
+		fmt.Fprint(s.stderr, cliUsage)
+		return 2
+	}
+	if s.goos != "linux" {
+		fmt.Fprintln(s.stderr, "golem-exec: the AppArmor profile is for Linux")
+		return 1
+	}
+	err := changeAppArmor(args[0] == "install", s.exe)
+	switch {
+	case errors.Is(err, errAppArmorNotNeeded):
+		fmt.Fprintln(s.stdout, "This kernel doesn't restrict user namespaces, so the jail makes its own without a profile.")
+		return 0
+	case err != nil:
+		fmt.Fprintf(s.stderr, "golem-exec: could not %s the AppArmor profile: %v\n", args[0], err)
+		return 1
+	case args[0] == "install":
+		fmt.Fprintln(s.stdout, "Installed golem-exec's AppArmor profile: an allowed-hosts network is now held by a network namespace.")
+		fmt.Fprintln(s.stdout, "The profile names a copy of this golem-exec; run this again after upgrading.")
+	default:
+		fmt.Fprintln(s.stdout, "Removed golem-exec's AppArmor profile.")
 	}
 	return 0
 }

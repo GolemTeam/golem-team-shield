@@ -14,17 +14,45 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
   # Ubuntu's default since 23.10: AppArmor keeps user namespaces from
-  # programs it doesn't name, so an allowlisted shell is held by Landlock's
-  # port rule rather than a namespace. These tests check that it still holds.
+  # programs it doesn't name. Without golem-exec's profile an allowlisted
+  # shell is held by Landlock's port rule; with it, by its own namespace, and
+  # the command still can't make one with capabilities or trace the launcher.
   linux-restricted-userns:
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: cmd/golem-exec
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
-      - run: go test -v -run TestLinux ./cmd/golem-exec
+      - run: go test -c -o $RUNNER_TEMP/golem-exec.test .
+      - name: without the profile
+        run: $RUNNER_TEMP/golem-exec.test -test.v -test.run TestLinux
+      - name: install the profile
+        run: sudo GOLEM_EXEC_APPARMOR=install $RUNNER_TEMP/golem-exec.test -test.v -test.run TestLinuxAppArmorProfile
+      - name: with the profile
+        run: GOLEM_EXEC_EXPECT_NAMESPACE=1 $RUNNER_TEMP/golem-exec.test -test.v -test.run TestLinux
+      - name: remove the profile
+        run: sudo GOLEM_EXEC_APPARMOR=remove $RUNNER_TEMP/golem-exec.test -test.v -test.run TestLinuxAppArmorProfile
+      - name: the real binary
+        run: |
+          bin=$RUNNER_TEMP/bin && mkdir -p $bin ~/.golem
+          go build -o $bin/golem-exec . && ln -s golem-exec $bin/golem-bash
+          printf '{"network":"allowlist","allowed_hosts":["github.com"]}' > ~/.golem/shield.json
+          $bin/golem-exec status | grep -q 'sudo .* apparmor install'
+          sudo $bin/golem-exec apparmor install
+          $bin/golem-exec status | grep -q "held by a network namespace, which golem-exec's AppArmor profile"
+          outside=$(readlink /proc/self/ns/net)
+          inside=$($bin/golem-bash -c 'tr "\0" " " < /proc/$PPID/cmdline; readlink /proc/self/ns/net')
+          echo "$inside"
+          case "$inside" in golem-shield-userns*) ;; *) echo "not started by the launcher"; exit 1 ;; esac
+          [ "${inside##* }" != "$outside" ] || { echo "same network namespace"; exit 1; }
+          if /usr/local/libexec/golem-exec/golem-exec status; then echo "the copy ran as the CLI"; exit 1; fi
+          sudo $bin/golem-exec apparmor remove
+          [ ! -e /usr/local/libexec/golem-exec ] && [ ! -e /etc/apparmor.d/golem-exec ]
   release-config:
     runs-on: ubuntu-latest
     steps:

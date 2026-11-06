@@ -41,6 +41,8 @@ func canJail() bool { return landlockABI() >= shield.LandlockMinABI }
 // namespace, where loopback is the only address and only the proxy listens on
 // it; where the kernel won't make one, the stage runs again without and holds
 // the network with Landlock's port rule (shield.LinuxJail.NetFallback).
+// Where AppArmor lets only a program it names make a namespace, the profiled
+// copy of golem-exec makes it (apparmor_linux.go).
 func (s *shim) jailed(rec *shield.RunRecord, p shield.Policy, tmp string, argv, env []string) bool {
 	abi := landlockABI()
 	if abi < shield.LandlockMinABI {
@@ -77,7 +79,7 @@ func (s *shim) jailed(rec *shield.RunRecord, p shield.Policy, tmp string, argv, 
 	}
 	code, mode, err := 0, shield.NetMode(""), errNoNamespace
 	if !s.noNamespace {
-		code, mode, err = s.stage(stageSpec{Jail: j, Namespace: true}, argv, env)
+		code, mode, err = s.stage(stageSpec{Jail: j, Namespace: true, launcher: profiledLauncher()}, argv, env)
 	}
 	if errors.Is(err, errNoNamespace) {
 		code, mode, err = s.stage(stageSpec{Jail: j}, argv, env)
@@ -90,6 +92,7 @@ func (s *shim) jailed(rec *shield.RunRecord, p shield.Policy, tmp string, argv, 
 type stageSpec struct {
 	Jail      shield.LinuxJail `json:"jail"`
 	Namespace bool             `json:"namespace,omitempty"`
+	launcher  string
 }
 
 const (
@@ -117,6 +120,10 @@ func (s *shim) stage(spec stageSpec, argv, env []string) (int, shield.NetMode, e
 	defer w.Close()
 	cmd := exec.Command("/proc/self/exe")
 	cmd.Args = append([]string{jailStage}, argv...)
+	if spec.launcher != "" {
+		cmd = exec.Command(spec.launcher)
+		cmd.Args = append([]string{jailLauncher}, argv...)
+	}
 	cmd.ExtraFiles = []*os.File{r}
 	var ctl *os.File
 	if spec.Jail.Proxy > 0 {
@@ -130,17 +137,8 @@ func (s *shim) stage(spec stageSpec, argv, env []string) (int, shield.NetMode, e
 		defer child.Close()
 		cmd.ExtraFiles = append(cmd.ExtraFiles, child)
 	}
-	if spec.Namespace {
-		uid, gid := os.Getuid(), os.Getgid()
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			Cloneflags:  syscall.CLONE_NEWUSER | syscall.CLONE_NEWNET | syscall.CLONE_NEWNS,
-			UidMappings: []syscall.SysProcIDMap{{ContainerID: uid, HostID: uid, Size: 1}},
-			GidMappings: []syscall.SysProcIDMap{{ContainerID: gid, HostID: gid, Size: 1}},
-			// The stage runs as the user, not root, in its namespace, so it
-			// keeps only what it needs to bring up loopback and hide the
-			// resolvers across its exec, and clears them before the shell's.
-			AmbientCaps: []uintptr{unix.CAP_NET_ADMIN, unix.CAP_SYS_ADMIN},
-		}
+	if spec.Namespace && spec.launcher == "" {
+		cmd.SysProcAttr = namespaceAttr()
 	}
 	modes := make(chan byte, 1)
 	code, err := s.tryStart(cmd, env, func() {
@@ -183,6 +181,20 @@ func (s *shim) stage(spec stageSpec, argv, env []string) (int, shield.NetMode, e
 		}
 	}
 	return code, "", nil
+}
+
+// namespaceAttr puts the stage in a new user, network and mount namespace.
+func namespaceAttr() *syscall.SysProcAttr {
+	uid, gid := os.Getuid(), os.Getgid()
+	return &syscall.SysProcAttr{
+		Cloneflags:  syscall.CLONE_NEWUSER | syscall.CLONE_NEWNET | syscall.CLONE_NEWNS,
+		UidMappings: []syscall.SysProcIDMap{{ContainerID: uid, HostID: uid, Size: 1}},
+		GidMappings: []syscall.SysProcIDMap{{ContainerID: gid, HostID: gid, Size: 1}},
+		// The stage runs as the user, not root, in its namespace, so it
+		// keeps only what it needs to bring up loopback and hide the
+		// resolvers across its exec, and clears them before the shell's.
+		AmbientCaps: []uintptr{unix.CAP_NET_ADMIN, unix.CAP_SYS_ADMIN},
+	}
 }
 
 // readStageCtl reads the stage's one message, and serves the proxy on the
@@ -292,6 +304,9 @@ func applyJailStage(argv []string) error {
 	if err := allThreads(unix.SYS_PRCTL, unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
 		return err
 	}
+	if err := allThreads(unix.SYS_PRCTL, unix.PR_CAP_AMBIENT, unix.PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0); err != nil {
+		return err
+	}
 	if err := applyLandlock(j, netPort); err != nil {
 		return err
 	}
@@ -326,7 +341,7 @@ func holdNetwork(spec stageSpec) (shield.InetDeny, int, error) {
 		if err != nil {
 			return "", 0, err
 		}
-		return shield.InetTCPOnly, 0, allThreads(unix.SYS_PRCTL, unix.PR_CAP_AMBIENT, unix.PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0)
+		return shield.InetTCPOnly, 0, nil
 	}
 	mode, inet := spec.Jail.NetFallback()
 	word, port := byte(ctlNoNetwork), 0

@@ -38,6 +38,7 @@ func newFakeSetup(t *testing.T, goos string) *fakeSetup {
 		stdout: &f.out, stderr: &f.errs,
 		canJail:    func() bool { return true },
 		firewallOn: func() (bool, error) { return false, nil },
+		appArmor:   func(string) appArmorState { return appArmorState{} },
 		agentRuns:  func() bool { return false },
 		selfTest: func(shim, command string) (int, error) {
 			f.ran = append(f.ran, command)
@@ -265,6 +266,55 @@ func TestFirewallIsForWindowsAndSaysWhetherItHolds(t *testing.T) {
 	w.status()
 	if !strings.Contains(w.out.String(), "held by the shield's Windows firewall filters") {
 		t.Errorf("status:\n%s", w.out.String())
+	}
+}
+
+func TestAppArmorIsForLinuxAndStatusSaysWhatHoldsTheNetwork(t *testing.T) {
+	f := newFakeSetup(t, "darwin")
+	if code := runCommand(f.setup, []string{"apparmor", "install"}); code != 1 || !strings.Contains(f.errs.String(), "for Linux") {
+		t.Errorf("macOS: exit %d %s", code, f.errs.String())
+	}
+	if code := runCommand(f.setup, []string{"apparmor"}); code != 2 {
+		t.Errorf("no action: exit %d", code)
+	}
+	for _, c := range []struct {
+		state appArmorState
+		want  string
+	}{
+		{appArmorState{}, "held by a network namespace, or where the kernel allows none"},
+		{appArmorState{Restricted: true}, "To let the jail make its namespace, run:"},
+		{appArmorState{Restricted: true, Installed: true}, "is another build; after an upgrade, run again:"},
+		{appArmorState{Restricted: true, Installed: true, Current: true}, "which golem-exec's AppArmor profile lets the jail make"},
+	} {
+		l := newFakeSetup(t, "linux")
+		l.appArmor = func(string) appArmorState { return c.state }
+		if err := shield.WriteConfig(shield.ConfigPath(l.home), shield.Config{Network: shield.NetworkAllowlist}); err != nil {
+			t.Fatal(err)
+		}
+		l.status()
+		got := l.out.String()
+		if !strings.Contains(got, c.want) {
+			t.Errorf("%+v: status:\n%s", c.state, got)
+		}
+		if c.state.Restricted && !c.state.Current && !strings.Contains(got, "sudo "+l.exe+" apparmor install") {
+			t.Errorf("%+v: no command to run:\n%s", c.state, got)
+		}
+	}
+}
+
+func TestOnlyTheJailRunsAsTheProfiledCopy(t *testing.T) {
+	for _, invoked := range []string{"golem-zsh", "golem-bash", "bash", "sh", "golem-exec"} {
+		if roleAllowed(appArmorStage, invoked) {
+			t.Errorf("the profiled copy ran as %s", invoked)
+		}
+		if !roleAllowed("/home/u/.golem/bin/golem-exec", invoked) {
+			t.Errorf("the user's own golem-exec refused %s", invoked)
+		}
+	}
+	for _, invoked := range []string{jailLauncher, jailStage} {
+		if !roleAllowed(appArmorStage, invoked) {
+			t.Errorf("the profiled copy refused %s", invoked)
+		}
 	}
 }
 

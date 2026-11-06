@@ -31,6 +31,13 @@ var version = "dev"
 func main() {
 	invoked := filepath.Base(os.Args[0])
 	args := os.Args[1:]
+	if exe, err := os.Executable(); err == nil && !roleAllowed(exe, invoked) {
+		fmt.Fprintln(os.Stderr, "golem-exec: this copy only starts the Golem shield's jail")
+		os.Exit(126)
+	}
+	if invoked == jailLauncher {
+		os.Exit(runJailLauncher(args))
+	}
 	if invoked == jailStage {
 		os.Exit(runJailStage(args))
 	}

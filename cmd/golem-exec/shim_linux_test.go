@@ -2,21 +2,29 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/GolemTeam/golem-team-shield/shield"
 )
 
 // The jail stage re-executes /proc/self/exe, which under test is this binary.
 func TestMain(m *testing.M) {
-	if filepath.Base(os.Args[0]) == jailStage {
+	switch filepath.Base(os.Args[0]) {
+	case jailStage:
 		os.Exit(runJailStage(os.Args[1:]))
+	case jailLauncher:
+		os.Exit(runJailLauncher(os.Args[1:]))
 	}
 	if addr := os.Getenv("GOLEM_EXEC_DIAL"); addr != "" {
 		network, address, _ := strings.Cut(addr, ":")
@@ -321,6 +329,9 @@ func TestLinuxNamespacedCommandHasNoCapabilities(t *testing.T) {
 	s, w, out := linuxShim(t, p)
 	s.run("/bin/bash", []string{"-c", `grep -E '^Cap(Eff|Prm|Amb)' /proc/self/status; id -u`})
 	if len(w.runs) != 1 || w.runs[0].Net != shield.NetNamespace {
+		if os.Getenv("GOLEM_EXEC_EXPECT_NAMESPACE") == "1" {
+			t.Fatalf("expected a namespace here, got runs %+v", w.runs)
+		}
 		t.Skipf("no namespace here (net %q)", w.runs[0].Net)
 	}
 	got := out.String()
@@ -357,5 +368,111 @@ func TestLinuxConfinedWritesOutsideARepositoryAndIntoNewCaches(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(s.home, "go")); err == nil {
 		t.Error("a cache for a tool the machine doesn't have was created")
+	}
+}
+
+// Run as root with GOLEM_EXEC_APPARMOR=install or remove, the test binary
+// installs itself as the profiled copy or takes it out again, so the tests
+// that follow, run as the user, start their stage from it.
+func TestLinuxAppArmorProfile(t *testing.T) {
+	action := os.Getenv("GOLEM_EXEC_APPARMOR")
+	if action == "" {
+		t.Skip("set GOLEM_EXEC_APPARMOR=install or remove, as root")
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := changeAppArmor(action == "install", self); err != nil {
+		t.Fatal(err)
+	}
+	st := appArmorStatus(self)
+	if action == "remove" {
+		if st.Installed {
+			t.Fatalf("after remove: %+v", st)
+		}
+		for _, p := range []string{appArmorProfile, appArmorStage} {
+			if _, err := os.Stat(p); err == nil {
+				t.Errorf("%s is still there", p)
+			}
+		}
+		return
+	}
+	if !st.Installed || !st.Current || !st.Restricted {
+		t.Fatalf("after install: %+v", st)
+	}
+	if b, err := os.ReadFile("/sys/kernel/security/apparmor/profiles"); err != nil || !strings.Contains(string(b), "golem-exec (") {
+		t.Errorf("the profile isn't loaded: %v", err)
+	}
+}
+
+// The profile lets the copy make namespaces, and nothing else: the command
+// it starts can make one but hold no capability in it, no process can trace
+// the launcher, and the command can read its own children but no other
+// process of the user's.
+func TestLinuxProfiledLauncherHandsTheCommandNothing(t *testing.T) {
+	if profiledLauncher() == "" {
+		if os.Getenv("GOLEM_EXEC_EXPECT_NAMESPACE") == "1" && userNSRestricted() {
+			t.Fatal("no profiled copy to launch from")
+		}
+		t.Skip("no profiled copy of golem-exec here")
+	}
+	p := shield.Policy{Enforce: true, State: shield.Clean, Grants: shield.AllGrants(), Network: shield.NetworkAllowlist}
+	s, w, out := linuxShim(t, p)
+	marker := filepath.Join(s.cwd, "launcher-pid")
+	script := `unshare -Urn sh -c 'ip link set lo up && echo NESTEDCAP' 2>/dev/null;` +
+		` sleep 5 & cat /proc/$!/environ >/dev/null && echo CHILDREAD;` +
+		` cat /proc/` + strconv.Itoa(os.Getpid()) + `/environ >/dev/null 2>&1 && echo OUTSIDEREAD;` +
+		` echo $PPID $$ > ` + marker + `.tmp && mv ` + marker + `.tmp ` + marker + `; sleep 3; echo done`
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.run("/bin/bash", []string{"-c", script})
+	}()
+	var pid int
+	for i := 0; i < 50 && pid == 0; i++ {
+		if b, err := os.ReadFile(marker); err == nil {
+			f := strings.Fields(string(b))
+			if len(f) == 2 {
+				pid, _ = strconv.Atoi(f[0])
+			}
+		} else {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	if pid == 0 {
+		<-done
+		t.Fatalf("the command never ran: %s", out.String())
+	}
+	cmdline, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	if !strings.HasPrefix(string(cmdline), jailLauncher+"\x00") {
+		t.Errorf("the command's parent is %q, not the launcher", cmdline)
+	}
+	traced := make(chan error, 1)
+	go func() {
+		runtime.LockOSThread()
+		err := unix.PtraceAttach(pid)
+		if err == nil {
+			_, _ = unix.Wait4(pid, nil, 0, nil)
+			_ = unix.PtraceDetach(pid)
+		}
+		traced <- err
+	}()
+	if err := <-traced; err == nil {
+		t.Error("the launcher could be traced")
+	}
+	if _, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid)); err == nil {
+		t.Error("the launcher's environment could be read")
+	}
+	<-done
+	got := out.String()
+	if strings.Contains(got, "NESTEDCAP") || !strings.Contains(got, "done") {
+		t.Errorf("the command made a namespace with capabilities, or didn't finish: %s", got)
+	}
+	if !strings.Contains(got, "CHILDREAD") || strings.Contains(got, "OUTSIDEREAD") {
+		t.Errorf("the command couldn't read its own child, or could read the shim: %s", got)
+	}
+	if len(w.runs) != 1 || w.runs[0].Net != shield.NetNamespace {
+		t.Errorf("runs %+v", w.runs)
 	}
 }
