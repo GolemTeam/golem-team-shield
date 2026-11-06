@@ -75,7 +75,7 @@ func (s *shim) jailed(rec *shield.RunRecord, p shield.Policy, tmp string, argv, 
 	launcher := profiledLauncher()
 	canNamespace := !s.noNamespace && (launcher != "" || !userNSRestricted() || os.Geteuid() == 0)
 	if canNamespace {
-		makeClaudeFolders(c.Workspace)
+		makeProjectFolders(c)
 	}
 	plan, _ := planProjectMounts(projectPaths(c), c.Workspace, workingFolders(c))
 	code, mode, err := 0, shield.NetMode(""), errNoNamespace
@@ -365,6 +365,13 @@ func holdFiles(spec stageSpec) error {
 		os.Exit(stageRetryExit)
 	}
 	if unix.Mount("", "/", "", unix.MS_REC|unix.MS_PRIVATE, "") != nil || applyMountPlan(spec.Mounts) != nil {
+		retry()
+	}
+	// The working directory still points into the mounts as they were before
+	// the binds, where a folder bound onto itself on the way down keeps the
+	// original, writable copies of what is bound beneath it. Entering it
+	// again by its path lands on the new ones.
+	if wd, err := os.Getwd(); err != nil || unix.Chdir(wd) != nil {
 		retry()
 	}
 	if spec.Jail.Proxy > 0 {

@@ -562,11 +562,21 @@ func TestLinuxProjectFilesAreHeld(t *testing.T) {
 	}
 }
 
-// A work tree without .claude gets one, held, so a command can't make
-// Claude Code's settings there.
-func TestLinuxMissingClaudeFolderIsMadeAndHeld(t *testing.T) {
+// A work tree without the agents' folders gets them, held, so a command
+// can't make their settings there, at the root or on the way down.
+func TestLinuxMissingProjectFoldersAreMadeAndHeld(t *testing.T) {
 	s, w, out := linuxShim(t, shield.Policy{Enforce: true, State: shield.Clean, Grants: shield.AllGrants()})
-	script := `mkdir -p .claude; echo X > .claude/settings.json && echo W1; rmdir .claude && echo W2; touch newfile && echo OK1; true`
+	sub := filepath.Join(s.cwd, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s.cwd = sub
+	if err := os.Chdir(sub); err != nil {
+		t.Fatal(err)
+	}
+	script := `mkdir -p .claude ../.cursor; echo X > ../.claude/settings.json && echo W1; rmdir ../.claude && echo W2;` +
+		` echo X > ../.cursor/hooks.json && echo W3; echo X > .gemini/settings.json && echo W4;` +
+		` touch ../newfile newfile2 && echo OK1; true`
 	s.run("/bin/bash", []string{"-c", script})
 	if len(w.runs) != 1 || w.runs[0].Files != shield.FilesHeld {
 		if os.Getenv("GOLEM_EXEC_EXPECT_NAMESPACE") == "1" {
@@ -575,11 +585,53 @@ func TestLinuxMissingClaudeFolderIsMadeAndHeld(t *testing.T) {
 		t.Skipf("no namespace here (runs %+v)", w.runs)
 	}
 	got := out.String()
-	if strings.Contains(got, "W1") || strings.Contains(got, "W2") || !strings.Contains(got, "OK1") {
-		t.Errorf("output: %s", got)
+	for _, bad := range []string{"W1", "W2", "W3", "W4"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("%s got through: %s", bad, got)
+		}
 	}
-	entries, err := os.ReadDir(filepath.Join(s.cwd, ".claude"))
-	if err != nil || len(entries) != 0 {
-		t.Errorf(".claude: %v %v", entries, err)
+	if !strings.Contains(got, "OK1") {
+		t.Errorf("ordinary work was refused: %s", got)
+	}
+	for _, d := range []string{"../.claude", "../.cursor", "../.vscode", ".gemini", ".claude"} {
+		entries, err := os.ReadDir(filepath.Join(sub, d))
+		if err != nil || len(entries) != 0 {
+			t.Errorf("%s: %v %v", d, entries, err)
+		}
+	}
+}
+
+// A folder on the way down to the working directory is bound onto itself,
+// so a relative path from inside it must still meet the read-only binds.
+func TestLinuxProjectFilesAreHeldBelowTheWorkingDirectory(t *testing.T) {
+	s, w, out := linuxShim(t, shield.Policy{Enforce: true, State: shield.Clean, Grants: shield.AllGrants()})
+	sub := filepath.Join(s.cwd, "sub")
+	plant(t, filepath.Join(sub, ".claude", "settings.json"), "ORIG")
+	plant(t, filepath.Join(sub, ".github", "hooks", "a.json"), "ORIG")
+	s.cwd = sub
+	if err := os.Chdir(sub); err != nil {
+		t.Fatal(err)
+	}
+	s.run("/bin/bash", []string{"-c", `echo X > .claude/settings.json && echo W1; echo X > .github/hooks/a.json && echo W2;` +
+		` echo X > .github/hooks/b.json && echo W3; touch newfile && echo OK1; true`})
+	if len(w.runs) != 1 || w.runs[0].Files != shield.FilesHeld {
+		if os.Getenv("GOLEM_EXEC_EXPECT_NAMESPACE") == "1" {
+			t.Fatalf("expected the files held, runs %+v", w.runs)
+		}
+		t.Skipf("no namespace here (runs %+v)", w.runs)
+	}
+	got := out.String()
+	for _, bad := range []string{"W1", "W2", "W3"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("%s got through: %s", bad, got)
+		}
+	}
+	if !strings.Contains(got, "OK1") {
+		t.Errorf("ordinary work was refused: %s", got)
+	}
+	for _, f := range []string{".claude/settings.json", ".github/hooks/a.json"} {
+		if b, _ := os.ReadFile(filepath.Join(sub, f)); string(b) != "ORIG" {
+			t.Errorf("%s now holds %q", f, b)
+		}
 	}
 }

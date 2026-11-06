@@ -37,18 +37,36 @@ type projectPath struct {
 	Kind projectKind
 }
 
-// makeClaudeFolders makes each git work tree's .claude when it is missing,
-// as the Windows jail does: five agents read it, and its settings.json
-// re-points Claude Code's shell, but a file missing at the root can't be
-// held, and a folder that exists can (bound read-only while it lacks a file
-// on the list). Git doesn't list an empty folder.
-func makeClaudeFolders(workspace []string) {
-	for _, ws := range workspace {
-		if _, err := os.Lstat(filepath.Join(ws, ".git")); err != nil {
+// makeProjectFolders makes each agent's folder missing at a root (the git
+// work tree's, or a folder on the way down to the working directory:
+// .claude, .cursor, .github, .vscode, …), as the Windows jail does. A file
+// missing at a root can't be held, but a folder that exists can, bound
+// read-only while it lacks a file on the list. .mcp.json, the one file at a
+// root, isn't held. Git doesn't list an empty folder.
+func makeProjectFolders(c shield.Context) {
+	var trees []string
+	for _, ws := range c.Workspace {
+		if _, err := os.Lstat(filepath.Join(ws, ".git")); err == nil {
+			trees = append(trees, filepath.Clean(ws))
+		}
+	}
+	working := workingFolders(c)
+	for _, f := range shield.ProjectFilePaths(c).Folders {
+		parent := filepath.Dir(f)
+		if !working[parent] || working[f] || !(isTree(parent, trees)) {
 			continue
 		}
-		_ = os.Mkdir(filepath.Join(ws, ".claude"), 0o755)
+		_ = os.Mkdir(f, 0o755)
 	}
+}
+
+func isTree(p string, trees []string) bool {
+	for _, t := range trees {
+		if p == t || within(p, []string{t}) {
+			return true
+		}
+	}
+	return false
 }
 
 func projectPaths(c shield.Context) []projectPath {
