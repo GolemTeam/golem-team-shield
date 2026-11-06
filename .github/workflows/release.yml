@@ -11,6 +11,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Refuse a tag older than the newest one
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          newest=$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -vxF "$TAG" | sort -V | tail -n1)
+          if [ -n "$newest" ] && [ "$(printf '%s\n%s\n' "$newest" "$TAG" | sort -V | tail -n1)" != "$TAG" ]; then
+            echo "::error::$TAG is not newer than $newest, so releasing it would roll Homebrew and the latest download back to older code. Tag a version after $newest."
+            exit 1
+          fi
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
