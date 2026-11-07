@@ -398,8 +398,8 @@ func TestLinuxAppArmorProfile(t *testing.T) {
 		}
 		return
 	}
-	if !installed || !current || shield.LinuxNamespaces(self) != shield.NamespacesProfiled {
-		t.Fatalf("after install: installed %v, current %v, %s", installed, current, shield.LinuxNamespaces(self))
+	if !installed || !current || !shield.UserNSRestricted() {
+		t.Fatalf("after install: installed %v, current %v, restricted %v", installed, current, shield.UserNSRestricted())
 	}
 	if b, err := os.ReadFile("/sys/kernel/security/apparmor/profiles"); err != nil || !strings.Contains(string(b), "golem-exec (") {
 		t.Errorf("the profile isn't loaded: %v", err)
@@ -416,6 +416,9 @@ func TestLinuxProfiledLauncherHandsTheCommandNothing(t *testing.T) {
 			t.Fatal("no profiled copy to launch from")
 		}
 		t.Skip("no profiled copy of golem-exec here")
+	}
+	if self, _ := os.Executable(); os.Geteuid() != 0 && shield.LinuxNamespaces(self) != shield.NamespacesProfiled {
+		t.Errorf("golem doctor would say %s", shield.LinuxNamespaces(self))
 	}
 	p := shield.Policy{Enforce: true, State: shield.Clean, Grants: shield.AllGrants(), Network: shield.NetworkAllowlist}
 	s, w, out := linuxShim(t, p)
