@@ -2,6 +2,7 @@ package shield
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -60,16 +61,17 @@ func antigravityCoverage(env CoverageEnv) (AgentCoverage, bool) {
 		return c, true
 	}
 	hooked := false
-	if doc := readJSON(path); doc != nil {
-		var hooks struct {
-			PreToolUse []json.RawMessage `json:"PreToolUse"`
-		}
-		if raw, ok := doc.Get("hooks"); ok {
-			_ = json.Unmarshal(raw, &hooks)
-		}
-		for _, g := range hooks.PreToolUse {
-			for _, cmd := range codexGroupCommands(g) {
-				hooked = hooked || IsAntigravityJailHook(cmd)
+	var plugins map[string]json.RawMessage
+	if b, err := os.ReadFile(path); err == nil && json.Unmarshal(b, &plugins) == nil {
+		for _, raw := range plugins {
+			var block struct {
+				PreToolUse []json.RawMessage `json:"PreToolUse"`
+			}
+			_ = json.Unmarshal(raw, &block)
+			for _, g := range block.PreToolUse {
+				for _, cmd := range codexGroupCommands(g) {
+					hooked = hooked || IsAntigravityJailHook(cmd)
+				}
 			}
 		}
 	}

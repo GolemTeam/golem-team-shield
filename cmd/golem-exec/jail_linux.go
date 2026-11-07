@@ -73,7 +73,7 @@ func (s *shim) jailed(rec *shield.RunRecord, p shield.Policy, tmp string, argv, 
 		rec.Writes = string(shield.WritesWorkspace)
 	}
 	launcher := profiledLauncher()
-	canNamespace := !s.noNamespace && (launcher != "" || !userNSRestricted() || os.Geteuid() == 0)
+	canNamespace := !s.noNamespace && (launcher != "" || !shield.UserNSRestricted() || os.Geteuid() == 0)
 	if canNamespace {
 		makeProjectFolders(c)
 	}

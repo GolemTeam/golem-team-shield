@@ -1,17 +1,12 @@
 package main
 
-const (
-	appArmorStage = "/usr/local/libexec/golem-exec/golem-exec"
-	jailLauncher  = "golem-shield-userns"
-)
+import "github.com/GolemTeam/golem-team-shield/shield"
 
-type appArmorState struct {
-	Restricted, Installed, Current bool
-}
+const jailLauncher = "golem-shield-userns"
 
 // roleAllowed: the profiled copy may make namespaces, so it runs only as the
 // launcher and the jail stage, never as a shell or the CLI, which could hand
 // that to a program of the caller's choosing.
 func roleAllowed(exe, invoked string) bool {
-	return exe != appArmorStage || invoked == jailLauncher || invoked == jailStage
+	return exe != shield.AppArmorStage || invoked == jailLauncher || invoked == jailStage
 }

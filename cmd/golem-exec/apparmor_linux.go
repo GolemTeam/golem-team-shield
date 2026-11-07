@@ -1,8 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"debug/elf"
 	"errors"
 	"fmt"
 	"io"
@@ -10,9 +8,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/GolemTeam/golem-team-shield/shield"
 )
 
 // Ubuntu (23.10 on) keeps unprivileged user namespaces from every program
@@ -36,8 +35,8 @@ import (
 //     running command's namespace, as with any program a profile lets make
 //     one (docs/design-shield-workspace-and-egress.md, Ubuntu).
 const (
-	appArmorProfile = "/etc/apparmor.d/golem-exec"
-	userNSRestrict  = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns"
+	appArmorProfile = shield.AppArmorProfile
+	appArmorStage   = shield.AppArmorStage
 )
 
 var appArmorParsers = []string{"/usr/sbin/apparmor_parser", "/sbin/apparmor_parser"}
@@ -92,11 +91,6 @@ profile golem-exec-command flags=(attach_disconnected,mediate_deleted) {
 `
 }
 
-func userNSRestricted() bool {
-	b, err := os.ReadFile(userNSRestrict)
-	return err == nil && strings.TrimSpace(string(b)) == "1"
-}
-
 func appArmorParser() string {
 	for _, p := range appArmorParsers {
 		if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() {
@@ -122,7 +116,7 @@ func changeAppArmor(install bool, self string) error {
 		}
 		return nil
 	}
-	if _, err := os.Stat(userNSRestrict); err != nil {
+	if !shield.UserNSRestrictable() {
 		return errAppArmorNotNeeded
 	}
 	if parser == "" {
@@ -184,71 +178,16 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	return os.Rename(tmp, path)
 }
 
-func appArmorStatus(self string) appArmorState {
-	st := appArmorState{Restricted: userNSRestricted()}
-	if _, err := os.Stat(appArmorProfile); err != nil || !rootOwned(appArmorStage) {
-		return st
-	}
-	st.Installed = true
-	st.Current = sameBuild(self, appArmorStage)
-	return st
-}
-
 // profiledLauncher is the copy to start the namespaced stage from, or "" to
 // make the namespace from the shim itself.
 func profiledLauncher() string {
-	if !userNSRestricted() {
+	if !shield.UserNSRestricted() {
 		return ""
 	}
-	if _, err := os.Stat(appArmorProfile); err != nil {
-		return ""
-	}
-	if !rootOwned(appArmorStage) || !sameBuild("/proc/self/exe", appArmorStage) {
+	if _, current := shield.AppArmorCopy("/proc/self/exe"); !current {
 		return ""
 	}
 	return appArmorStage
-}
-
-func rootOwned(path string) bool {
-	for _, p := range []string{path, filepath.Dir(path)} {
-		fi, err := os.Lstat(p)
-		if err != nil || fi.Mode()&0o022 != 0 || (p == path && !fi.Mode().IsRegular()) {
-			return false
-		}
-		st, ok := fi.Sys().(*syscall.Stat_t)
-		if !ok || st.Uid != 0 {
-			return false
-		}
-	}
-	return true
-}
-
-// sameBuild compares Go build IDs: the stage reads its spec as JSON, and an
-// older build would drop a field it doesn't know without a word.
-func sameBuild(a, b string) bool {
-	ia, err := goBuildID(a)
-	if err != nil {
-		return false
-	}
-	ib, err := goBuildID(b)
-	return err == nil && bytes.Equal(ia, ib)
-}
-
-func goBuildID(path string) ([]byte, error) {
-	f, err := elf.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	sec := f.Section(".note.go.buildid")
-	if sec == nil {
-		return nil, errors.New("no Go build ID")
-	}
-	b, err := sec.Data()
-	if err != nil || len(b) == 0 {
-		return nil, errors.New("no Go build ID")
-	}
-	return b, nil
 }
 
 // runJailLauncher is the profiled copy's one job: start the jail stage in a

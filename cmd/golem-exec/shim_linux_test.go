@@ -386,10 +386,10 @@ func TestLinuxAppArmorProfile(t *testing.T) {
 	if err := changeAppArmor(action == "install", self); err != nil {
 		t.Fatal(err)
 	}
-	st := appArmorStatus(self)
+	installed, current := shield.AppArmorCopy(self)
 	if action == "remove" {
-		if st.Installed {
-			t.Fatalf("after remove: %+v", st)
+		if installed {
+			t.Fatal("still installed after remove")
 		}
 		for _, p := range []string{appArmorProfile, appArmorStage} {
 			if _, err := os.Stat(p); err == nil {
@@ -398,8 +398,8 @@ func TestLinuxAppArmorProfile(t *testing.T) {
 		}
 		return
 	}
-	if !st.Installed || !st.Current || !st.Restricted {
-		t.Fatalf("after install: %+v", st)
+	if !installed || !current || shield.LinuxNamespaces(self) != shield.NamespacesProfiled {
+		t.Fatalf("after install: installed %v, current %v, %s", installed, current, shield.LinuxNamespaces(self))
 	}
 	if b, err := os.ReadFile("/sys/kernel/security/apparmor/profiles"); err != nil || !strings.Contains(string(b), "golem-exec (") {
 		t.Errorf("the profile isn't loaded: %v", err)
@@ -412,7 +412,7 @@ func TestLinuxAppArmorProfile(t *testing.T) {
 // process of the user's.
 func TestLinuxProfiledLauncherHandsTheCommandNothing(t *testing.T) {
 	if profiledLauncher() == "" {
-		if os.Getenv("GOLEM_EXEC_EXPECT_NAMESPACE") == "1" && userNSRestricted() {
+		if os.Getenv("GOLEM_EXEC_EXPECT_NAMESPACE") == "1" && shield.UserNSRestricted() {
 			t.Fatal("no profiled copy to launch from")
 		}
 		t.Skip("no profiled copy of golem-exec here")

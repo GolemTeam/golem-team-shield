@@ -69,7 +69,7 @@ func TestCopilotAndAntigravityCoverage(t *testing.T) {
 		{"Copilot with the Golem agent's hook", "copilot", map[string]string{".copilot/config.json": "{}", ".copilot/hooks/golem.json": `{"hooks":{"preToolUse":[{"bash":"if [ -x '/g' ]; then '/g' copilot-hook preToolUse --hold 35; fi"}]}}`}, Jailed, "preToolUse hook"},
 		{"Copilot with golem-exec's hook", "copilot", map[string]string{".copilot/session-state/x": "", ".copilot/hooks/golem-shield.json": `{"hooks":{"preToolUse":[{"bash":"/h/.golem/bin/golem-exec hook copilot"}]}}`}, Jailed, "preToolUse hook"},
 		{"Copilot without a hook", "copilot", map[string]string{".copilot/config.json": "{}"}, NotJailed, "no preToolUse hook"},
-		{"Antigravity with the Golem agent's hook", "antigravity", map[string]string{".gemini/antigravity/x": "", ".gemini/config/hooks.json": `{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"/g antigravity-hook PreToolUse"}]}]}}`}, Jailed, "PreToolUse hook"},
+		{"Antigravity with the Golem agent's hook", "antigravity", map[string]string{".gemini/antigravity/x": "", ".gemini/config/hooks.json": `{"other":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"lint.sh"}]}]},"golem":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"/g antigravity-hook PreToolUse --hold=35"}]}],"PreInvocation":[{"command":"/g antigravity-hook PreInvocation"}]}}`}, Jailed, "PreToolUse hook"},
 		{"Antigravity without", "antigravity", map[string]string{".gemini/antigravity-cli/x": ""}, NotJailed, "isn't registered"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

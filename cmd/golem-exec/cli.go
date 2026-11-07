@@ -59,7 +59,7 @@ type setup struct {
 	stderr     io.Writer
 	canJail    func() bool
 	firewallOn func() (bool, error)
-	appArmor   func(self string) appArmorState
+	namespaces func(self string) shield.Namespaces
 	agentRuns  func() bool
 	selfTest   func(shim, command string) (int, error)
 }
@@ -72,7 +72,7 @@ func newSetup(witness string) *setup {
 	}
 	s := &setup{
 		home: home, goos: runtime.GOOS, exe: exe, loginShell: os.Getenv("SHELL"), codexHome: os.Getenv("CODEX_HOME"), witness: witness,
-		stdin: os.Stdin, stdout: os.Stdout, stderr: os.Stderr, canJail: canJail, firewallOn: firewallInstalled, appArmor: appArmorStatus, selfTest: runThroughShim,
+		stdin: os.Stdin, stdout: os.Stdout, stderr: os.Stderr, canJail: canJail, firewallOn: firewallInstalled, namespaces: shield.LinuxNamespaces, selfTest: runThroughShim,
 	}
 	s.agentRuns = s.agentPresent
 	return s
@@ -404,6 +404,9 @@ func (s *setup) status() int {
 	} else {
 		fmt.Fprintf(s.stdout, "kernel jail  not available: %s\n", jailUnavailable(s.goos))
 	}
+	if s.goos == "linux" {
+		s.statusProjectFiles()
+	}
 
 	cfgPath := shield.ConfigPath(s.home)
 	cfg, found, err := shield.LoadConfig(cfgPath)
@@ -462,23 +465,52 @@ func (s *setup) statusConfinement(p shield.Policy) {
 			fmt.Fprintln(s.stdout, "             run `golem-exec firewall install` as administrator to refuse the rest")
 		}
 	case "linux":
-		switch aa := s.appArmor(s.exe); {
-		case aa.Restricted && aa.Current:
+		switch ns := s.namespaces(s.exe); ns {
+		case shield.NamespacesOpen:
+			fmt.Fprintln(s.stdout, "             held by each command's own network namespace")
+		case shield.NamespacesProfiled:
 			fmt.Fprintln(s.stdout, "             held by a network namespace, which golem-exec's AppArmor profile lets the jail make")
-		case aa.Restricted:
-			fmt.Fprintln(s.stdout, "             held by Landlock's port rule, which lets a program that ignores the proxy reach any host")
-			fmt.Fprintln(s.stdout, "             on the proxy's port: AppArmor keeps user namespaces from programs it doesn't name.")
-			if aa.Installed {
-				fmt.Fprintln(s.stdout, "             The profile's copy of golem-exec is another build; after an upgrade, run again:")
-			} else {
-				fmt.Fprintln(s.stdout, "             To let the jail make its namespace, run:")
-			}
-			fmt.Fprintf(s.stdout, "             sudo %s apparmor install\n", s.exe)
 		default:
-			fmt.Fprintln(s.stdout, "             held by a network namespace, or where the kernel allows none, by Landlock's port rule,")
-			fmt.Fprintln(s.stdout, "             which lets a program that ignores the proxy reach any host on the proxy's port")
+			fmt.Fprintln(s.stdout, "             held by Landlock's port rule, which lets a program that ignores the proxy reach any host")
+			fmt.Fprintln(s.stdout, "             on the proxy's port: "+namespaceGap(ns))
+			s.namespaceFix(ns)
 		}
 	}
+}
+
+// statusProjectFiles says whether the agents' project files (hooks, MCP
+// servers, settings) are held, which on Linux takes each command's own
+// namespace.
+func (s *setup) statusProjectFiles() {
+	ns := s.namespaces(s.exe)
+	if ns.Held() {
+		fmt.Fprintln(s.stdout, "project      the agents' hooks, MCP servers and settings in the work tree are held read-only")
+		return
+	}
+	fmt.Fprintln(s.stdout, "project      the agents' hooks, MCP servers and settings in the work tree are NOT held:")
+	fmt.Fprintln(s.stdout, "             "+namespaceGap(ns))
+	s.namespaceFix(ns)
+}
+
+func namespaceGap(ns shield.Namespaces) string {
+	switch ns {
+	case shield.NamespacesNoProfile, shield.NamespacesStaleProfile:
+		return "AppArmor keeps user namespaces from programs it doesn't name."
+	default:
+		return "this system lets no program make a user namespace (a container, or user namespaces turned off)."
+	}
+}
+
+func (s *setup) namespaceFix(ns shield.Namespaces) {
+	switch ns {
+	case shield.NamespacesStaleProfile:
+		fmt.Fprintln(s.stdout, "             The profile's copy of golem-exec is another build; after an upgrade, run again:")
+	case shield.NamespacesNoProfile:
+		fmt.Fprintln(s.stdout, "             To let the jail make its namespace, run:")
+	default:
+		return
+	}
+	fmt.Fprintf(s.stdout, "             sudo %s apparmor install\n", s.exe)
 }
 
 // test runs two commands through the installed shim: one must run, and one
