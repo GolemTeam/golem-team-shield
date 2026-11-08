@@ -38,7 +38,7 @@ func newFakeSetup(t *testing.T, goos string) *fakeSetup {
 		stdout: &f.out, stderr: &f.errs,
 		canJail:    func() bool { return true },
 		firewallOn: func() (bool, error) { return false, nil },
-		namespaces: func(string) shield.Namespaces { return shield.NamespacesOpen },
+		namespaces: func() shield.Namespaces { return shield.NamespacesOpen },
 		agentRuns:  func() bool { return false },
 		selfTest: func(shim, command string) (int, error) {
 			f.ran = append(f.ran, command)
@@ -283,12 +283,12 @@ func TestAppArmorIsForLinuxAndStatusSaysWhatHoldsTheNetwork(t *testing.T) {
 	}{
 		{shield.NamespacesOpen, []string{"held by each command's own network namespace", "settings in the work tree are held read-only"}},
 		{shield.NamespacesNoProfile, []string{"To let the jail make its namespace, run:", "are NOT held"}},
-		{shield.NamespacesStaleProfile, []string{"is another build; after an upgrade, run again:", "are NOT held"}},
+		{shield.NamespacesStaleProfile, []string{"is too old for this one; run again:", "are NOT held"}},
 		{shield.NamespacesProfiled, []string{"which golem-exec's AppArmor profile lets the jail make", "are held read-only"}},
 		{shield.NamespacesNone, []string{"lets no program make a user namespace", "are NOT held"}},
 	} {
 		l := newFakeSetup(t, "linux")
-		l.namespaces = func(string) shield.Namespaces { return c.state }
+		l.namespaces = func() shield.Namespaces { return c.state }
 		if err := shield.WriteConfig(shield.ConfigPath(l.home), shield.Config{Network: shield.NetworkAllowlist}); err != nil {
 			t.Fatal(err)
 		}
@@ -315,7 +315,7 @@ func TestStatusSaysTheProjectFilesAreHeldOnlyOnLinux(t *testing.T) {
 }
 
 func TestOnlyTheJailRunsAsTheProfiledCopy(t *testing.T) {
-	for _, invoked := range []string{"golem-zsh", "golem-bash", "bash", "sh", "golem-exec"} {
+	for _, invoked := range []string{"golem-zsh", "golem-bash", "bash", "sh", "golem-exec", jailStage, jailStagePrepared} {
 		if roleAllowed(shield.AppArmorStage, invoked) {
 			t.Errorf("the profiled copy ran as %s", invoked)
 		}
@@ -323,7 +323,7 @@ func TestOnlyTheJailRunsAsTheProfiledCopy(t *testing.T) {
 			t.Errorf("the user's own golem-exec refused %s", invoked)
 		}
 	}
-	for _, invoked := range []string{jailLauncher, jailStage} {
+	for _, invoked := range []string{shield.AppArmorLauncherRole, jailSetup} {
 		if !roleAllowed(shield.AppArmorStage, invoked) {
 			t.Errorf("the profiled copy refused %s", invoked)
 		}

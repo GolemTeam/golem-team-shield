@@ -59,7 +59,7 @@ type setup struct {
 	stderr     io.Writer
 	canJail    func() bool
 	firewallOn func() (bool, error)
-	namespaces func(self string) shield.Namespaces
+	namespaces func() shield.Namespaces
 	agentRuns  func() bool
 	selfTest   func(shim, command string) (int, error)
 }
@@ -465,7 +465,7 @@ func (s *setup) statusConfinement(p shield.Policy) {
 			fmt.Fprintln(s.stdout, "             run `golem-exec firewall install` as administrator to refuse the rest")
 		}
 	case "linux":
-		switch ns := s.namespaces(s.exe); ns {
+		switch ns := s.namespaces(); ns {
 		case shield.NamespacesOpen:
 			fmt.Fprintln(s.stdout, "             held by each command's own network namespace")
 		case shield.NamespacesProfiled:
@@ -482,7 +482,7 @@ func (s *setup) statusConfinement(p shield.Policy) {
 // servers, settings) are held, which on Linux takes each command's own
 // namespace.
 func (s *setup) statusProjectFiles() {
-	ns := s.namespaces(s.exe)
+	ns := s.namespaces()
 	if ns.Held() {
 		fmt.Fprintln(s.stdout, "project      the agents' hooks, MCP servers and settings in the work tree are held read-only")
 		return
@@ -504,7 +504,7 @@ func namespaceGap(ns shield.Namespaces) string {
 func (s *setup) namespaceFix(ns shield.Namespaces) {
 	switch ns {
 	case shield.NamespacesStaleProfile:
-		fmt.Fprintln(s.stdout, "             The profile's copy of golem-exec is another build; after an upgrade, run again:")
+		fmt.Fprintln(s.stdout, "             The profile's copy of golem-exec is too old for this one; run again:")
 	case shield.NamespacesNoProfile:
 		fmt.Fprintln(s.stdout, "             To let the jail make its namespace, run:")
 	default:
@@ -611,7 +611,7 @@ func (s *setup) apparmor(args []string) int {
 		return 1
 	case args[0] == "install":
 		fmt.Fprintln(s.stdout, "Installed golem-exec's AppArmor profile: an allowed-hosts network is now held by a network namespace.")
-		fmt.Fprintln(s.stdout, "The profile names a copy of this golem-exec; run this again after upgrading.")
+		fmt.Fprintln(s.stdout, "The profile names a copy of this golem-exec, which later versions keep using; `golem-exec status` says if one ever needs it installed again.")
 	default:
 		fmt.Fprintln(s.stdout, "Removed golem-exec's AppArmor profile.")
 	}

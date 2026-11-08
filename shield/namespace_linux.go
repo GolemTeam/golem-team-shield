@@ -1,9 +1,6 @@
 package shield
 
 import (
-	"bytes"
-	"debug/elf"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,11 +22,11 @@ func UserNSRestrictable() bool {
 	return err == nil
 }
 
-// LinuxNamespaces says whether golem-exec, the build at golemExec, can make
-// each command's namespace here.
-func LinuxNamespaces(golemExec string) Namespaces {
+// LinuxNamespaces says whether golem-exec can make each command's namespace
+// here.
+func LinuxNamespaces() Namespaces {
 	if UserNSRestricted() && os.Geteuid() != 0 {
-		installed, current := AppArmorCopy(golemExec)
+		installed, current := AppArmorCopy()
 		switch {
 		case current:
 			return NamespacesProfiled
@@ -45,13 +42,24 @@ func LinuxNamespaces(golemExec string) Namespaces {
 	return NamespacesOpen
 }
 
-// AppArmorCopy says whether golem-exec's profile is installed, with the
-// root-owned copy it names, and whether that copy is the build at golemExec.
-func AppArmorCopy(golemExec string) (installed, current bool) {
-	if _, err := os.Stat(AppArmorProfile); err != nil || !RootOwned(AppArmorStage) {
+// AppArmorInstalled is golem-exec's profile with the root-owned copy it
+// names.
+func AppArmorInstalled() bool {
+	_, err := os.Stat(AppArmorProfile)
+	return err == nil && RootOwned(AppArmorStage)
+}
+
+// AppArmorCopy says whether the profile is installed, and whether its copy
+// speaks this build's setup protocol: an older one refuses, and commands get
+// no namespace until root installs the profile again.
+func AppArmorCopy() (installed, current bool) {
+	if !AppArmorInstalled() {
 		return false, false
 	}
-	return true, SameBuild(golemExec, AppArmorStage)
+	cmd := exec.Command(AppArmorStage, AppArmorProtocolQuery)
+	cmd.Args[0] = AppArmorLauncherRole
+	out, err := cmd.Output()
+	return true, err == nil && strings.TrimSpace(string(out)) == NamespaceSetupProtocol
 }
 
 // probeNamespace starts true in a user and mount namespace, as the jail
@@ -92,33 +100,4 @@ func RootOwned(path string) bool {
 		}
 	}
 	return true
-}
-
-// SameBuild compares Go build IDs, which survive stripping: the jail stage
-// reads its spec as JSON, and an older build would drop a field it doesn't
-// know without a word.
-func SameBuild(a, b string) bool {
-	ia, err := goBuildID(a)
-	if err != nil {
-		return false
-	}
-	ib, err := goBuildID(b)
-	return err == nil && bytes.Equal(ia, ib)
-}
-
-func goBuildID(path string) ([]byte, error) {
-	f, err := elf.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	sec := f.Section(".note.go.buildid")
-	if sec == nil {
-		return nil, errors.New("no Go build ID")
-	}
-	b, err := sec.Data()
-	if err != nil || len(b) == 0 {
-		return nil, errors.New("no Go build ID")
-	}
-	return b, nil
 }

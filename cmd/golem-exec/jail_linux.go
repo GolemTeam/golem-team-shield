@@ -118,6 +118,10 @@ const (
 
 var errNoNamespace = errors.New("no namespace")
 
+// The launcher's arguments: the setup protocol the shim expects of the copy,
+// then whether the namespace gets its own network.
+var launcherSetup = "--setup=" + shield.NamespaceSetupProtocol
+
 const (
 	launcherNet   = "--net"
 	launcherNoNet = "--no-net"
@@ -143,7 +147,7 @@ func (s *shim) stage(spec stageSpec, argv, env []string) (int, shield.NetMode, e
 		if spec.Net {
 			netFlag = launcherNet
 		}
-		cmd.Args = append([]string{jailLauncher, netFlag}, argv...)
+		cmd.Args = append([]string{jailLauncher, launcherSetup, netFlag}, argv...)
 	}
 	cmd.ExtraFiles = []*os.File{r}
 	var ctl *os.File
@@ -157,6 +161,14 @@ func (s *shim) stage(spec stageSpec, argv, env []string) (int, shield.NetMode, e
 		defer ctl.Close()
 		defer child.Close()
 		cmd.ExtraFiles = append(cmd.ExtraFiles, child)
+	}
+	if spec.launcher != "" {
+		bin, err := os.Open("/proc/self/exe")
+		if err != nil {
+			return 0, "", errNoNamespace
+		}
+		defer bin.Close()
+		cmd.ExtraFiles = append(cmd.ExtraFiles, bin)
 	}
 	if spec.Namespace && spec.launcher == "" {
 		cmd.SysProcAttr = namespaceAttr(spec.Net)
@@ -302,14 +314,14 @@ func harnessFiles(dir string, args []string) []string {
 // runJailStage is the shim's second process: it reads the compiled rules,
 // applies them to itself and execs argv. It returns only when that failed,
 // and then the command doesn't run: never unjailed.
-func runJailStage(argv []string) int {
+func runJailStage(argv []string, prepared bool) int {
 	runtime.LockOSThread()
-	err := applyJailStage(argv)
+	err := applyJailStage(argv, prepared)
 	fmt.Fprintf(os.Stderr, "golem-exec: can't apply the Golem shield (%T); not running the command\n", err)
 	return 126
 }
 
-func applyJailStage(argv []string) error {
+func applyJailStage(argv []string, prepared bool) error {
 	if len(argv) == 0 || !filepath.IsAbs(argv[0]) {
 		return errors.New("no shell")
 	}
@@ -328,7 +340,7 @@ func applyJailStage(argv []string) error {
 	}
 	j := spec.Jail
 	if spec.Namespace {
-		if err := holdFiles(spec); err != nil {
+		if err := holdFiles(spec, prepared); err != nil {
 			return err
 		}
 	}
@@ -355,24 +367,15 @@ func applyJailStage(argv []string) error {
 	return syscall.Exec(argv[0], argv, os.Environ())
 }
 
-// holdFiles makes the namespace's mounts its own and binds the project
-// files. If it can't, nothing has run, and the shim runs the stage again
-// without a namespace. Without a proxy to hand over, it tells the shim here.
-func holdFiles(spec stageSpec) error {
-	retry := func() {
+// holdFiles sets the namespace up, unless the profiled copy already has
+// (setup_linux.go). If it can't, nothing has run, and the shim runs the stage
+// again without a namespace. Without a proxy to hand over, it tells the shim
+// here.
+func holdFiles(spec stageSpec, prepared bool) error {
+	if !prepared && prepareNamespace(setupSpec{Net: spec.Net, Mounts: spec.Mounts}) != nil {
 		ctl := os.NewFile(stageCtlFD, "stage-ctl")
 		_, _ = ctl.Write([]byte{ctlRetry})
 		os.Exit(stageRetryExit)
-	}
-	if unix.Mount("", "/", "", unix.MS_REC|unix.MS_PRIVATE, "") != nil || applyMountPlan(spec.Mounts) != nil {
-		retry()
-	}
-	// The working directory still points into the mounts as they were before
-	// the binds, where a folder bound onto itself on the way down keeps the
-	// original, writable copies of what is bound beneath it. Entering it
-	// again by its path lands on the new ones.
-	if wd, err := os.Getwd(); err != nil || unix.Chdir(wd) != nil {
-		retry()
 	}
 	if spec.Jail.Proxy > 0 {
 		return nil
@@ -400,7 +403,6 @@ func holdNetwork(spec stageSpec) (shield.InetDeny, int, error) {
 			_, _ = ctl.Write([]byte{ctlRetry})
 			os.Exit(stageRetryExit)
 		}
-		hideResolvers()
 		err = unix.Sendmsg(int(ctl.Fd()), []byte{ctlNamespace}, unix.UnixRights(lfd), nil, 0)
 		unix.Close(lfd)
 		if err != nil {
@@ -421,25 +423,9 @@ func holdNetwork(spec stageSpec) (shield.InetDeny, int, error) {
 // hold a proxy; it ran nothing, and the shim runs it again without one.
 const stageRetryExit = 125
 
-// namespaceProxyListener brings up the namespace's loopback and listens on
-// port there, for the shim outside to serve the proxy on.
+// namespaceProxyListener listens on port on the namespace's loopback, for
+// the shim outside to serve the proxy on.
 func namespaceProxyListener(port int) (int, error) {
-	sock, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
-	if err != nil {
-		return -1, err
-	}
-	defer unix.Close(sock)
-	ifr, err := unix.NewIfreq("lo")
-	if err != nil {
-		return -1, err
-	}
-	if err := unix.IoctlIfreq(sock, unix.SIOCGIFFLAGS, ifr); err != nil {
-		return -1, err
-	}
-	ifr.SetUint16(ifr.Uint16() | unix.IFF_UP)
-	if err := unix.IoctlIfreq(sock, unix.SIOCSIFFLAGS, ifr); err != nil {
-		return -1, err
-	}
 	lfd, err := unix.Socket(unix.AF_INET, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
 	if err != nil {
 		return -1, err
@@ -453,20 +439,6 @@ func namespaceProxyListener(port int) (int, error) {
 		return -1, err
 	}
 	return lfd, nil
-}
-
-// resolverDirs hold the sockets through which a name is resolved outside the
-// namespace: systemd-resolved's varlink socket, nscd, and the system bus,
-// which resolved answers on too. An empty tmpfs over each keeps a command
-// from sending what it read out as a DNS query.
-var resolverDirs = []string{"/run/systemd/resolve", "/run/nscd", "/var/run/nscd", "/run/dbus"}
-
-func hideResolvers() {
-	for _, d := range resolverDirs {
-		if fi, err := os.Stat(d); err == nil && fi.IsDir() {
-			_ = unix.Mount("tmpfs", d, "tmpfs", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC, "size=4k,mode=0755")
-		}
-	}
 }
 
 // landlockNetPortAttr is struct landlock_net_port_attr, which x/sys lacks.

@@ -6,8 +6,6 @@ import (
 	"sort"
 	"strings"
 
-	"golang.org/x/sys/unix"
-
 	"github.com/GolemTeam/golem-team-shield/shield"
 )
 
@@ -103,15 +101,6 @@ func workingFolders(c shield.Context) map[string]bool {
 	return out
 }
 
-type mountPlan struct {
-	Binds []planBind `json:"binds,omitempty"`
-}
-
-type planBind struct {
-	Path     string `json:"path"`
-	ReadOnly bool   `json:"ro,omitempty"`
-}
-
 // planProjectMounts works out the binds that hold paths, deepest first, and
 // returns the files it can't hold for the check after the command.
 func planProjectMounts(paths []projectPath, roots []string, working map[string]bool) (mountPlan, []projectPath) {
@@ -187,38 +176,4 @@ func within(p string, roots []string) bool {
 		}
 	}
 	return false
-}
-
-// applyMountPlan binds each path onto itself, deepest first so a folder's
-// recursive bind carries what was bound inside it, then makes the read-only
-// ones read-only. A remount must keep the flags the original mount was
-// locked with, or the kernel refuses it in a user namespace.
-func applyMountPlan(plan mountPlan) error {
-	for _, b := range plan.Binds {
-		if err := unix.Mount(b.Path, b.Path, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
-			return err
-		}
-	}
-	for _, b := range plan.Binds {
-		if !b.ReadOnly {
-			continue
-		}
-		var st unix.Statfs_t
-		if err := unix.Statfs(b.Path, &st); err != nil {
-			return err
-		}
-		flags := uintptr(unix.MS_REMOUNT | unix.MS_BIND | unix.MS_RDONLY)
-		for _, f := range []struct{ st, ms uintptr }{
-			{unix.ST_NOSUID, unix.MS_NOSUID}, {unix.ST_NODEV, unix.MS_NODEV}, {unix.ST_NOEXEC, unix.MS_NOEXEC},
-			{unix.ST_NOATIME, unix.MS_NOATIME}, {unix.ST_NODIRATIME, unix.MS_NODIRATIME}, {unix.ST_RELATIME, unix.MS_RELATIME},
-		} {
-			if uintptr(st.Flags)&f.st != 0 {
-				flags |= f.ms
-			}
-		}
-		if err := unix.Mount("", b.Path, "", flags, ""); err != nil {
-			return err
-		}
-	}
-	return nil
 }

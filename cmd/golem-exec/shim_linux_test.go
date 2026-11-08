@@ -22,7 +22,11 @@ import (
 func TestMain(m *testing.M) {
 	switch filepath.Base(os.Args[0]) {
 	case jailStage:
-		os.Exit(runJailStage(os.Args[1:]))
+		os.Exit(runJailStage(os.Args[1:], false))
+	case jailStagePrepared:
+		os.Exit(runJailStage(os.Args[1:], true))
+	case jailSetup:
+		os.Exit(runJailSetup(os.Args[1:]))
 	case jailLauncher:
 		os.Exit(runJailLauncher(os.Args[1:]))
 	}
@@ -386,7 +390,7 @@ func TestLinuxAppArmorProfile(t *testing.T) {
 	if err := changeAppArmor(action == "install", self); err != nil {
 		t.Fatal(err)
 	}
-	installed, current := shield.AppArmorCopy(self)
+	installed, current := shield.AppArmorCopy()
 	if action == "remove" {
 		if installed {
 			t.Fatal("still installed after remove")
@@ -417,8 +421,8 @@ func TestLinuxProfiledLauncherHandsTheCommandNothing(t *testing.T) {
 		}
 		t.Skip("no profiled copy of golem-exec here")
 	}
-	if self, _ := os.Executable(); os.Geteuid() != 0 && shield.LinuxNamespaces(self) != shield.NamespacesProfiled {
-		t.Errorf("golem doctor would say %s", shield.LinuxNamespaces(self))
+	if os.Geteuid() != 0 && shield.LinuxNamespaces() != shield.NamespacesProfiled {
+		t.Errorf("golem doctor would say %s", shield.LinuxNamespaces())
 	}
 	p := shield.Policy{Enforce: true, State: shield.Clean, Grants: shield.AllGrants(), Network: shield.NetworkAllowlist}
 	s, w, out := linuxShim(t, p)

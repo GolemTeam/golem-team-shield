@@ -44,13 +44,16 @@ jobs:
           printf '{"network":"allowlist","allowed_hosts":["github.com"]}' > ~/.golem/shield.json
           $bin/golem-exec status | grep -q 'sudo .* apparmor install'
           sudo $bin/golem-exec apparmor install
+          go build -ldflags "-X main.version=later" -o $bin/golem-exec .
           $bin/golem-exec status | grep -q "held by a network namespace, which golem-exec's AppArmor profile"
+          $bin/golem-exec status | grep -q "settings in the work tree are held read-only"
           outside=$(readlink /proc/self/ns/net)
           inside=$($bin/golem-bash -c 'tr "\0" " " < /proc/$PPID/cmdline; readlink /proc/self/ns/net')
           echo "$inside"
           case "$inside" in golem-shield-userns*) ;; *) echo "not started by the launcher"; exit 1 ;; esac
           [ "${inside##* }" != "$outside" ] || { echo "same network namespace"; exit 1; }
           if /usr/local/libexec/golem-exec/golem-exec status; then echo "the copy ran as the CLI"; exit 1; fi
+          if (exec -a golem-shield-jail /usr/local/libexec/golem-exec/golem-exec /bin/true); then echo "the copy ran as the stage"; exit 1; fi
           sudo $bin/golem-exec apparmor remove
           [ ! -e /usr/local/libexec/golem-exec ] && [ ! -e /etc/apparmor.d/golem-exec ]
   release-config:

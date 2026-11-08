@@ -6,7 +6,7 @@ import (
 )
 
 func TestLinuxNamespacesProbe(t *testing.T) {
-	ns := LinuxNamespaces(os.Args[0])
+	ns := LinuxNamespaces()
 	t.Logf("namespaces here: %s", ns)
 	if os.Getenv("GOLEM_EXEC_EXPECT_NAMESPACE") == "1" && !ns.Held() {
 		t.Fatalf("expected a namespace, got %s", ns)

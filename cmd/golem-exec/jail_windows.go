@@ -353,4 +353,4 @@ func restrictedToken(shieldSIDs []*windows.SID, drop []string) (windows.Token, e
 	return out, nil
 }
 
-func runJailStage([]string) int { return 126 }
+func runJailStage([]string, bool) int { return 126 }

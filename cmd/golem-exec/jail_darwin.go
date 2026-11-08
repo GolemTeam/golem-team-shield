@@ -59,4 +59,4 @@ func hostJail(rec *shield.RunRecord, p shield.Policy) {
 	}
 }
 
-func runJailStage([]string) int { return 126 }
+func runJailStage([]string, bool) int { return 126 }

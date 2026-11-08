@@ -6,4 +6,4 @@ func UserNSRestricted() bool { return false }
 
 func UserNSRestrictable() bool { return false }
 
-func LinuxNamespaces(string) Namespaces { return "" }
+func LinuxNamespaces() Namespaces { return "" }

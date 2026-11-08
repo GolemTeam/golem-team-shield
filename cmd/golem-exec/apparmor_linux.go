@@ -37,6 +37,7 @@ import (
 const (
 	appArmorProfile = shield.AppArmorProfile
 	appArmorStage   = shield.AppArmorStage
+	jailLauncher    = shield.AppArmorLauncherRole
 )
 
 var appArmorParsers = []string{"/usr/sbin/apparmor_parser", "/sbin/apparmor_parser"}
@@ -184,29 +185,38 @@ func profiledLauncher() string {
 	if !shield.UserNSRestricted() {
 		return ""
 	}
-	if _, current := shield.AppArmorCopy("/proc/self/exe"); !current {
+	if !shield.AppArmorInstalled() {
 		return ""
 	}
 	return appArmorStage
 }
 
-// runJailLauncher is the profiled copy's one job: start the jail stage in a
-// new user, network and mount namespace, which AppArmor lets only this file
-// make, and wait for it. If it can't, nothing ran, and it tells the shim so.
+// runJailLauncher is the profiled copy's first job: start itself as the
+// setup in a new user, mount and network namespace, which AppArmor lets only
+// this file make, and wait for it. The shim names the setup protocol it
+// expects; a copy that speaks another refuses, and the shim runs the command
+// without a namespace. Asked for --protocol, it says which it speaks.
 func runJailLauncher(args []string) int {
-	spec, ctl := os.NewFile(jailSpecFD, "jail-spec"), os.NewFile(stageCtlFD, "stage-ctl")
-	if len(args) == 0 || (args[0] != launcherNet && args[0] != launcherNoNet) {
-		_, _ = ctl.Write([]byte{ctlRetry})
+	if len(args) == 1 && args[0] == shield.AppArmorProtocolQuery {
+		fmt.Println(shield.NamespaceSetupProtocol)
+		return 0
+	}
+	spec, ctl, bin := os.NewFile(jailSpecFD, "jail-spec"), os.NewFile(stageCtlFD, "stage-ctl"), os.NewFile(stageBinFD, "stage-bin")
+	if len(args) < 2 || args[0] != launcherSetup || (args[1] != launcherNet && args[1] != launcherNoNet) || spec == nil || ctl == nil || bin == nil {
+		if ctl != nil {
+			_, _ = ctl.Write([]byte{ctlRetry})
+		}
 		return stageRetryExit
 	}
 	cmd := exec.Command("/proc/self/exe")
-	cmd.Args = append([]string{jailStage}, args[1:]...)
-	cmd.ExtraFiles = []*os.File{spec, ctl}
-	cmd.SysProcAttr = namespaceAttr(args[0] == launcherNet)
+	cmd.Args = append([]string{jailSetup}, args[2:]...)
+	cmd.ExtraFiles = []*os.File{spec, ctl, bin}
+	cmd.SysProcAttr = namespaceAttr(args[1] == launcherNet)
 	l := &shim{stdin: os.Stdin, stdout: os.Stdout, stderr: os.Stderr}
 	code, err := l.tryStart(cmd, os.Environ(), func() {
 		spec.Close()
 		ctl.Close()
+		bin.Close()
 		_ = unix.Prctl(unix.PR_SET_DUMPABLE, 0, 0, 0, 0)
 	})
 	if err != nil {

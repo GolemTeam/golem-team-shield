@@ -19,11 +19,21 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/GolemTeam/golem-team-shield/shield"
 )
 
 // jailStage is the name the shim runs itself under to apply a jail it can
 // only put on its own process (Landlock, seccomp) before it execs the shell.
 const jailStage = "golem-shield-jail"
+
+// jailSetup is the profiled copy's role in the namespace it made, and
+// jailStagePrepared the stage's when the copy has set that namespace up
+// (setup_linux.go).
+const (
+	jailSetup         = "golem-shield-setup"
+	jailStagePrepared = "golem-shield-jail-ns"
+)
 
 // version is set at release (-X main.version=...).
 var version = "dev"
@@ -35,11 +45,16 @@ func main() {
 		fmt.Fprintln(os.Stderr, "golem-exec: this copy only starts the Golem shield's jail")
 		os.Exit(126)
 	}
-	if invoked == jailLauncher {
+	if invoked == shield.AppArmorLauncherRole {
 		os.Exit(runJailLauncher(args))
 	}
-	if invoked == jailStage {
-		os.Exit(runJailStage(args))
+	switch invoked {
+	case jailSetup:
+		os.Exit(runJailSetup(args))
+	case jailStage:
+		os.Exit(runJailStage(args, false))
+	case jailStagePrepared:
+		os.Exit(runJailStage(args, true))
 	}
 	witness := witnessURL(os.Getenv("GOLEM_WITNESS_URL"))
 	if isSelf(invoked) {

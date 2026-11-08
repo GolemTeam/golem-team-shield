@@ -121,10 +121,12 @@ copy of golem-exec in
 .I /usr/local/libexec/golem-exec
 and a profile for it in
 .IR /etc/apparmor.d/golem-exec .
-The copy runs only as the jail's launcher, and the command it starts holds no
-capability.
-Run it again after upgrading; until then commands fall back to Landlock's port
-rule.
+The copy only sets up each command's namespace and hands it to your own
+golem-exec, and the command holds no capability.
+Later versions keep using it;
+.B status
+says if one ever needs it installed again, and until then commands fall back
+to Landlock's port rule.
 .B apparmor remove
 takes both out again.
 .TP

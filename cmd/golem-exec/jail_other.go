@@ -15,4 +15,4 @@ func (s *shim) jailed(rec *shield.RunRecord, p shield.Policy, _ string, argv, en
 	return true
 }
 
-func runJailStage([]string) int { return 126 }
+func runJailStage([]string, bool) int { return 126 }
