@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	_ "embed"
 	"encoding/hex"
@@ -22,7 +23,7 @@ var setupHashes = map[string]string{
 var setupSource []byte
 
 func TestSetupProtocolFollowsTheSetup(t *testing.T) {
-	sum := sha256.Sum256(setupSource)
+	sum := sha256.Sum256(bytes.ReplaceAll(setupSource, []byte("\r\n"), []byte("\n")))
 	got := hex.EncodeToString(sum[:])
 	if setupHashes[shield.NamespaceSetupProtocol] != got {
 		t.Fatalf("setup_linux.go changed (sha256 %s). If the change alters what the setup does, or fixes it, "+
