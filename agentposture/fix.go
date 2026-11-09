@@ -180,6 +180,26 @@ func refused(home string, it Item) string {
 	return ""
 }
 
+// noFixer says where to change a finding -fix has no change for, so a plan
+// with nothing to do never reads as a clean bill of health.
+func noFixer(it Item) string {
+	name := it.Client
+	if n := clientNames[it.Client]; n != "" {
+		name = n
+	}
+	if strings.HasSuffix(it.Location, ".vscdb") {
+		return "kept in the app's own database, which -fix never edits: change it in " + name + "'s settings"
+	}
+	return "-fix has no safe change for this: change it in " + name + "'s settings"
+}
+
+var clientNames = map[string]string{
+	"claude-code": "Claude Code", "claude-desktop": "Claude Desktop", "cursor": "Cursor", "codex": "Codex",
+	"gemini-cli": "Gemini CLI", "copilot": "Copilot CLI", "devin": "Devin", "vscode": "VS Code",
+	"vscode-insiders": "VS Code Insiders", "vscodium": "VSCodium", "windsurf": "Windsurf",
+	"antigravity": "Antigravity", "openclaw": "OpenClaw", "hermes": "Hermes", "ollama": "Ollama",
+}
+
 func realPath(home, location string) string {
 	if location == "~" || strings.HasPrefix(location, "~/") || strings.HasPrefix(location, `~\`) {
 		return filepath.Join(home, filepath.FromSlash(strings.TrimPrefix(location, "~")))
@@ -204,12 +224,22 @@ func PlanFixes(env Env) FixPlan {
 	files := map[string]*pendingFile{}
 	var order []string
 	for _, it := range ScanAll(env).Items {
-		f := fixerFor(it)
-		if f == nil || Rank(it.Severity) > Rank(Suspicious) {
+		if Rank(it.Severity) > Rank(Suspicious) {
+			continue
+		}
+		if it.Area == AreaProtections {
+			if it.Severity == Dangerous {
+				plan.Skipped = append(plan.Skipped, SkippedFix{it, "the jail is required here: run golem-exec install, or golem setup-client where the Golem agent runs"})
+			}
 			continue
 		}
 		if why := refused(env.Home, it); why != "" {
 			plan.Skipped = append(plan.Skipped, SkippedFix{it, why})
+			continue
+		}
+		f := fixerFor(it)
+		if f == nil {
+			plan.Skipped = append(plan.Skipped, SkippedFix{it, noFixer(it)})
 			continue
 		}
 		edits, why := f(s, it, realPath(env.Home, it.Location))

@@ -314,8 +314,9 @@ dangerous or suspicious finding, as a diff per file, and changes nothing.
 It never changes a repository's files, managed or MDM policy, a file with
 comments or one that doesn't parse, a symbolic link or a folder, and it deletes
 nothing. It doesn't move a plaintext secret: where it should live instead is
-your choice, and the report names each one. The plan lists what it left alone
-and why.
+your choice, and the report names each one. The plan lists every risky finding
+it left alone, including the ones it has no change for, with where to change
+each by hand, so "nothing to change" never hides one.
 
 Before writing anything, `-fix -yes` copies each file it changes into
 `~/.golem/check-backups/<time>/`, readable by you only, with a `manifest.json`

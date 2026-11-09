@@ -32,6 +32,10 @@ func runFix(out, stderr io.Writer, o Options, apply bool) int {
 func fixWith(out, stderr io.Writer, o Options, env agentposture.Env, plan agentposture.FixPlan, apply bool, now time.Time) int {
 	writePlan(out, plan)
 	if len(plan.Files) == 0 {
+		if len(plan.Skipped) > 0 {
+			fmt.Fprintln(out, "Nothing for -fix to change. The findings left alone above need changing by hand.")
+			return 0
+		}
 		fmt.Fprintln(out, "Nothing in your own agent settings for -fix to change.")
 		return 0
 	}

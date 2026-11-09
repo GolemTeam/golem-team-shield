@@ -273,3 +273,24 @@ func TestAHomeLocationResolvesWithEitherSeparator(t *testing.T) {
 		}
 	}
 }
+
+func TestAFindingWithNoFixIsListedWithWhereToChangeIt(t *testing.T) {
+	env := postureTestEnv(t)
+	writePostureFile(t, filepath.Join(env.Home, ".cursor", "mcp.json"), `{"mcpServers":{"notes":{"url":"http://notes.example.com/mcp"}}}`)
+	plan := PlanFixes(env)
+	if len(plan.Files) != 0 {
+		t.Fatalf("planned a change for a finding with no fix: %+v", plan.Files)
+	}
+	var found bool
+	for _, s := range plan.Skipped {
+		if s.Item.Check == "mcp_insecure_remote" {
+			found = strings.Contains(s.Reason, "change it in Cursor's settings")
+		}
+	}
+	if !found {
+		t.Errorf("the plain-HTTP server wasn't listed with where to change it: %+v", plan.Skipped)
+	}
+	if got := noFixer(Item{Client: "antigravity", Location: "~/Library/Application Support/Antigravity/User/globalStorage/state.vscdb"}); !strings.Contains(got, "own database") {
+		t.Errorf("an editor database's finding: %q", got)
+	}
+}
