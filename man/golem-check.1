@@ -11,6 +11,18 @@ golem-check \- grade how the AI coding agents on this machine are set up
 .RB [ \-fail\-on
 .IR severity ]
 .br
+.B golem-check \-repo
+.I dir
+.B \-upload
+.RB [ \-golem\-url
+.IR url ]
+.RB [ \-upload\-repo
+.IR owner/name ]
+.RB [ \-upload\-commit
+.IR sha ]
+.RB [ \-upload\-ref
+.IR ref ]
+.br
 .B golem-check \-fix
 .RB [ \-yes ]
 .RB [ \-o
@@ -51,7 +63,9 @@ and the shell jail.
 Unless it is run with
 .BR "\-fix \-yes" ,
 it reads files and nothing else.
-It sends nothing anywhere.
+Unless it is run with
+.BR \-upload ,
+it sends nothing anywhere.
 It never starts an MCP server.
 It reads the tools a server describes from the copy an agent wrote down the
 last time it started the server (Cursor, Antigravity, the VS Code family and
@@ -162,8 +176,67 @@ the exit status is 4.
 A file that changed after the plan was made stops it before anything is
 written.
 .TP
+.B \-upload
+With
+.BR \-repo ,
+also send the findings to Golem, where the console shows them beside each
+machine's agent settings, marked as from a repository and CI.
+It needs a CI token minted in the Golem console (IAM, AI agents, New CI token)
+in
+.BR GOLEM_CHECK_TOKEN .
+It sends each finding's client, check, severity, file, setting and detail, never
+a file's contents, with the repository's name, commit and ref.
+Each send replaces what the repository sent before, so send from one branch.
+It prints one line to standard error saying what was sent, or why nothing was;
+a failure does not change the exit status.
+.TP
+.BI \-golem\-url " url"
+Where
+.B \-upload
+sends: https, or http on this machine only.
+By default
+.BR GOLEM_URL ,
+or Golem's hosted service, https://relay.golem.team.
+.TP
+.BI \-upload\-repo " owner/name"
+The repository
+.B \-upload
+names.
+By default
+.B GITHUB_REPOSITORY
+or GitLab CI's
+.BR CI_PROJECT_PATH .
+.TP
+.BI \-upload\-commit " sha"
+The full SHA of the commit checked.
+By default
+.B GITHUB_SHA
+or
+.BR CI_COMMIT_SHA .
+.TP
+.BI \-upload\-ref " ref"
+The ref checked.
+By default
+.BR GITHUB_REF ,
+or GitLab CI's branch or tag.
+.TP
 .B \-version
 Print the version.
+.SH ENVIRONMENT
+.TP
+.B GOLEM_CHECK_TOKEN
+The CI token
+.B \-upload
+sends with, as the console showed it.
+It is read from the environment only, never from a flag, and never printed.
+It can report a repository's findings and do nothing else.
+.TP
+.B GOLEM_URL
+Where
+.B \-upload
+sends, when
+.B \-golem\-url
+is not given.
 .SH EXIT STATUS
 0 when the report was written, whatever it found, or when
 .B \-fix
@@ -197,6 +270,12 @@ input:
     with:
       fail-on: dangerous
 .fi
+.PP
+With
+.B "upload: true"
+and
+.B "golem-token: ${{ secrets.GOLEM_CHECK_TOKEN }}"
+it also sends the findings to Golem, from the repository's default branch only.
 .SH SEE ALSO
 .BR golem\-exec (1)
 .PP

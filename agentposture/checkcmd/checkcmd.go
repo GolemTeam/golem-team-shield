@@ -44,6 +44,12 @@ func Run(args []string, stdout, stderr io.Writer, o Options) int {
 	showVersion := fs.Bool("version", false, "print the version")
 	fix := fs.Bool("fix", false, "print the changes to your own agent settings that undo their risky findings, file by file, and change nothing")
 	yes := fs.Bool("yes", false, "with -fix, make the changes: each file is backed up first, and every one is put back if the grade drops")
+	var up uploadTarget
+	doUpload := fs.Bool("upload", false, "with -repo, also send the findings to Golem with the CI token in $"+TokenEnv+"; a failure prints one line and leaves the exit code alone")
+	fs.StringVar(&up.url, "golem-url", "", "where -upload sends them: $"+URLEnv+", or "+DefaultURL)
+	fs.StringVar(&up.repo, "upload-repo", "", "with -upload, the repository as owner/name: $GITHUB_REPOSITORY or $CI_PROJECT_PATH by default")
+	fs.StringVar(&up.commit, "upload-commit", "", "with -upload, the commit checked: $GITHUB_SHA or $CI_COMMIT_SHA by default")
+	fs.StringVar(&up.ref, "upload-ref", "", "with -upload, the ref checked: $GITHUB_REF, or the GitLab CI branch or tag, by default")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -58,6 +64,10 @@ func Run(args []string, stdout, stderr io.Writer, o Options) int {
 	}
 	if *yes && !*fix {
 		fmt.Fprintln(stderr, o.Name+": -yes goes with -fix")
+		return 2
+	}
+	if *doUpload && *repo == "" {
+		fmt.Fprintln(stderr, o.Name+": -upload sends a repository's findings: it goes with -repo")
 		return 2
 	}
 	if *fix && (*repo != "" || *asJSON || *withScore || *asSARIF || *asHTML || threshold >= 0) {
@@ -90,6 +100,9 @@ func Run(args []string, stdout, stderr io.Writer, o Options) int {
 	if err := write(out, res, format{*asJSON, *withScore, *asSARIF, *asHTML}, *repo != "", o); err != nil {
 		fmt.Fprintln(stderr, o.Name+": could not write the report")
 		return 1
+	}
+	if *doUpload {
+		upload(stderr, o.Name, up, res)
 	}
 	if threshold >= 0 && failing(res, threshold) {
 		return 3

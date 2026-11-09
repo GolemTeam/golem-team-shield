@@ -20,6 +20,15 @@ inputs:
   upload-sarif:
     description: "Upload the SARIF report to GitHub code scanning. Needs `security-events: write`."
     default: "true"
+  upload:
+    description: "Also send the findings to the Golem console, from the default branch only. Needs `golem-token`. A failure prints one line and does not fail the job."
+    default: "false"
+  golem-token:
+    description: "A CI token from the Golem console (IAM, AI agents, New CI token), kept as the secret `GOLEM_CHECK_TOKEN`. Used only with `upload`."
+    default: ""
+  golem-url:
+    description: "Where `upload` sends the findings. By default Golem's hosted service, https://relay.golem.team."
+    default: ""
 
 outputs:
   grade:
@@ -92,6 +101,27 @@ runs:
       with:
         sarif_file: ${{ inputs.sarif }}
         category: golem-check
+
+    - name: Send to Golem
+      if: ${{ always() && inputs.upload == 'true' && steps.check.outcome == 'success' }}
+      shell: bash
+      env:
+        CHECK_PATH: ${{ inputs.path }}
+        TOKEN_INPUT: ${{ inputs.golem-token }}
+        URL_INPUT: ${{ inputs.golem-url }}
+        EVENT_NAME: ${{ github.event_name }}
+        REF_TYPE: ${{ github.ref_type }}
+        REF_NAME: ${{ github.ref_name }}
+        DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      run: |
+        set -uo pipefail
+        if [[ "$EVENT_NAME" == pull_request* ]] || [ "$REF_TYPE" != branch ] || { [ -n "$DEFAULT_BRANCH" ] && [ "$REF_NAME" != "$DEFAULT_BRANCH" ]; }; then
+          echo "golem-check: not sent to Golem: only the default branch's findings are sent"
+          exit 0
+        fi
+        if [ -n "$TOKEN_INPUT" ]; then export GOLEM_CHECK_TOKEN="$TOKEN_INPUT"; fi
+        if [ -n "$URL_INPUT" ]; then export GOLEM_URL="$URL_INPUT"; fi
+        golem-check -repo "$CHECK_PATH" -json -o "$RUNNER_TEMP/golem-check-upload.json" -upload || true
 
     - name: Fail on findings
       if: ${{ steps.check.outputs.code == '3' }}

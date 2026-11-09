@@ -286,6 +286,7 @@ golem-check -json               # every finding, informational ones included (-w
 golem-check -html -o report.html   # one self-contained page to hand a security team
 golem-check -repo .             # only what this repository brings to anyone who clones it
 golem-check -repo . -sarif -o golem-check.sarif -fail-on suspicious   # for CI and GitHub code scanning
+golem-check -repo . -upload     # also send the findings to the Golem console (CI token in GOLEM_CHECK_TOKEN)
 golem-check -fix                # what it would change in your own settings, as a diff; changes nothing
 golem-check -fix -yes           # make those changes: backed up first, all put back if the grade drops
 ```
@@ -349,6 +350,41 @@ that), sets the `grade` output, and fails the job on a finding at least as sever
 as `fail-on`. It reads only the checked-out repository, follows no link out of
 it, and needs no token beyond the job's own.
 
+### Sending the findings to Golem
+
+With a Golem workspace, the findings can also go to the console, where they sit
+beside each machine's agent settings, marked as from a repository and CI, and
+alert the same way. It is off unless you turn it on:
+
+1. In the Golem console, open IAM, AI agents, and choose **New CI token**. The
+   token can report a repository's findings and do nothing else: it reads
+   nothing. It is shown once.
+2. Keep it as a repository or organization secret named `GOLEM_CHECK_TOKEN`.
+3. Turn `upload` on:
+
+```yaml
+  - uses: GolemTeam/golem-team-shield@v0.2.0
+    with:
+      fail-on: dangerous
+      upload: true
+      golem-token: ${{ secrets.GOLEM_CHECK_TOKEN }}
+      # golem-url: https://golem.acme.io   # your own Golem; Golem's hosted service by default
+```
+
+The action sends only from the repository's default branch, since each report
+replaces the repository's last one; a pull request's findings stay in code
+scanning. It sends the findings golem-check printed (the client, check,
+severity, file, setting and detail, never a file's contents) with the
+repository's name, commit and ref. A send that fails prints one line and does
+not fail the job. Revoke the token in the console's IAM, AI agents, and the next
+send is refused. Sending needs a golem-check release newer than v0.3.7.
+
+Outside GitHub Actions, run `golem-check -repo . -upload` with the token in
+`GOLEM_CHECK_TOKEN`. The repository, commit and ref come from GitHub Actions' or
+GitLab CI's variables, or `-upload-repo`, `-upload-commit` and `-upload-ref`;
+`-golem-url` or `GOLEM_URL` names your own Golem. The token is read from the
+environment only, never from a flag, and is never printed.
+
 It grades the AI coding agents on your machine out of 100, and scores each
 area:
 
@@ -371,8 +407,8 @@ opened. Copilot CLI's run modes are command-line flags no file records, so for
 Copilot CLI it reads the MCP servers, a repository's
 `.github/copilot-instructions.md` and the shell jail.
 
-Unless you run `-fix -yes`, it reads files and nothing else. It never starts an
-MCP server. It reads a server's tool descriptions from the copy an agent wrote
+Unless you run `-fix -yes`, it reads files and nothing else, and unless you run
+`-upload`, it sends nothing anywhere. It never starts an MCP server. It reads a server's tool descriptions from the copy an agent wrote
 down the last time it started it (Cursor, Antigravity, the VS Code family and
 Codex keep one), and names each configured server no agent kept a copy of; the
 Golem agent checks those as your agents receive them. It names a secret's file

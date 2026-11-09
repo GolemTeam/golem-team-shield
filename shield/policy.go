@@ -53,6 +53,7 @@ type Policy struct {
 	// RequireJail refuses a command the jail can't hold rather than run it
 	// without one.
 	RequireJail bool `json:"require_jail,omitempty"`
+	credentialPolicy
 }
 
 func AllGrants() Grants { return Grants{Agent: true, Docker: true, Cloud: true} }
