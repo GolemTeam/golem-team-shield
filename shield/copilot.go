@@ -107,6 +107,7 @@ func copilotCoverage(env CoverageEnv) (AgentCoverage, bool) {
 	shim, past := hookShimFor(env, filepath.Join(HookShimDir(env.Home), "bash"))
 	if shim == "" {
 		c.Detail = "On Windows Golem doesn't rewrite Copilot CLI's PowerShell commands: approving one for the session would approve every command" + pastApprovalHint
+		c.PastApproval = true
 		return c, true
 	}
 	hooked := false

@@ -18,7 +18,7 @@ func TestOnWindowsAllAgentsJailsCodexGeminiAndCopilot(t *testing.T) {
 	writeFile(t, filepath.Join(f.home, ".copilot", "config.json"), "{}")
 	writeFile(t, shield.ConfigPath(f.home), `{"network": "open"}`)
 
-	if code := f.install(false, false); code != 0 {
+	if code := f.install("", false, false); code != 0 {
 		t.Fatalf("exit %d: %s", code, f.errs.String())
 	}
 	if b, _ := os.ReadFile(hooks); strings.Contains(string(b), "hook codex") {
@@ -90,7 +90,7 @@ func TestOnWindowsAllAgentsJailsCodexGeminiAndCopilot(t *testing.T) {
 
 func TestWithoutTheSwitchTheWindowsHookLeavesTheCommand(t *testing.T) {
 	f := newFakeSetup(t, "windows")
-	if code := f.install(false, false); code != 0 {
+	if code := f.install("", false, false); code != 0 {
 		t.Fatalf("exit %d: %s", code, f.errs.String())
 	}
 	f.stdin = strings.NewReader(`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"}}`)
@@ -107,13 +107,13 @@ func TestAllAgentsJailsDevinAndUninstallTakesItOut(t *testing.T) {
 	f := newFakeSetup(t, "darwin")
 	writeFile(t, filepath.Join(f.home, ".codeium", "windsurf", "x"), "")
 	writeFile(t, shield.DevinConfig(f.home), `{"hooks": {"PreToolUse": [{"matcher": ".*", "hooks": [{"type": "command", "command": "mine.sh"}]}]}}`)
-	if code := f.install(false, false); code != 0 {
+	if code := f.install("", false, false); code != 0 {
 		t.Fatalf("exit %d: %s", code, f.errs.String())
 	}
 	if b, _ := os.ReadFile(shield.DevinConfig(f.home)); strings.Contains(string(b), "hook devin") {
 		t.Fatalf("Devin was hooked without the switch: %s", b)
 	}
-	if code := f.install(false, true); code != 0 {
+	if code := f.install("", true, false); code != 0 {
 		t.Fatalf("exit %d: %s", code, f.errs.String())
 	}
 	if b, _ := os.ReadFile(shield.DevinConfig(f.home)); !strings.Contains(string(b), f.hookCommand("devin")) || !strings.Contains(string(b), "mine.sh") {

@@ -7,6 +7,9 @@ import "github.com/GolemTeam/golem-team-shield/shield"
 func canJail() bool { return false }
 
 func (s *shim) jailed(rec *shield.RunRecord, p shield.Policy, _ string, argv, env []string) bool {
+	if p.RequireJail {
+		return false
+	}
 	rec.Jail = shield.JailNone
 	if p.Proxied() {
 		rec.Net = shield.NetAdvisory

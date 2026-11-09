@@ -122,6 +122,12 @@ func CheckHost(h string) error {
 	if h == "*" {
 		return nil
 	}
+	if strings.HasPrefix(h, "@") {
+		if _, ok := HostPresetNamed(h); !ok {
+			return fmt.Errorf("%q is not a preset; the presets are %s", h, strings.Join(HostPresetNames(), ", "))
+		}
+		return nil
+	}
 	if _, err := netip.ParseAddr(strings.Trim(h, "[]")); err == nil {
 		return nil
 	}

@@ -24,13 +24,14 @@ do with the default settings:
 |---|---|
 | Reading private SSH and GPG keys, `.netrc`, `.git-credentials` and shell history | The network |
 | Reading or writing browser profiles (cookies, saved logins), chat apps (Slack, Discord, Teams, Signal, Telegram, WhatsApp), password managers' data (1Password, Bitwarden, `pass`), mail and Messages | |
-| Writing to `~/.ssh`, your shell startup files, git config, `~/Library/LaunchAgents`, and the agents' settings and hooks | Cloud credentials: `~/.aws`, gcloud, Azure, kube, and Docker, npm and PyPI logins (turn these off with `--strict`) |
+| Writing to `~/.ssh`, your shell startup files, git config, `~/Library/LaunchAgents`, and the agents' settings and hooks | Cloud credentials: `~/.aws`, gcloud, Azure, kube, and Docker, npm and PyPI logins (turn these off with `--profile strict`) |
 | Secret-shaped environment variables (`*TOKEN*`, `*SECRET*`, `*API_KEY*`, `GH_*`, `ANTHROPIC_*`, `OPENAI_*` and others), which are removed | The SSH agent, the keychain and the Docker socket |
 | Reading or writing `~/.golem`, where the jail's own settings live | Everything else in your home directory and your projects |
 
 So it stops the obvious theft and persistence. With the default settings it
 does not stop a command from sending what it can read to the internet. Two
-settings tighten it, as far as Claude Code's own sandbox goes or further:
+settings tighten it, as far as Claude Code's own sandbox goes or further, and
+the `allowlist` [profile](#profiles) turns both on:
 
 - `"network": "allowlist"` lets commands reach only the hosts in
   `allowed_hosts`, through a proxy `golem-exec` runs for each command.
@@ -38,8 +39,8 @@ settings tighten it, as far as Claude Code's own sandbox goes or further:
   refused host is named in the command's output.
 - `"writes": "workspace"` keeps writes to the project, temp and the tool
   caches (`~/.cache`, `~/.npm`, `~/go/pkg/mod`, `~/Library/Caches` and
-  others), plus `allow_write`. A new install turns it on; a settings file
-  from before keeps `"anywhere"`.
+  others), plus `allow_write`. Every profile turns it on; a settings file
+  from before profiles keeps `"anywhere"`.
 
 Lockdown takes the network away entirely (see [Settings](#settings)).
 
@@ -127,7 +128,11 @@ golem-exec install
    shell: `golem-zsh` and `golem-bash`, or `bash.exe` on Windows. The jail keeps
    that directory unwritable, so no command can replace the shell the next
    command runs in.
-2. It writes the settings, `~/.golem/shield.json`, with every setting named.
+2. It writes the settings, `~/.golem/shield.json`: a [profile](#profiles),
+   `standard` unless you name another with `--profile`, and every setting the
+   profile leaves alone. On a machine that has the file, `--profile` sets the
+   profile there and takes out the settings it decides, keeping any set
+   tighter.
 3. It points Claude Code at the jail. It sets `CLAUDE_CODE_SHELL` in
    `~/.claude/settings.json`; on Windows it sets `CLAUDE_CODE_GIT_BASH_PATH` and
    turns off Claude Code's PowerShell tool, whose commands would not be jailed.
@@ -157,39 +162,115 @@ command and setting; the release archives carry the pages in `man/`.
 
 ## Settings
 
-`~/.golem/shield.json`:
+`~/.golem/shield.json`, as a new install writes it:
 
 ```json
 {
+  "profile": "standard",
   "enforce": true,
   "lockdown": false,
   "ssh_agent": true,
   "docker": true,
-  "cloud_credentials": true,
   "env_allow": [],
   "env_deny": [],
-  "writes": "anywhere",
   "allow_write": [],
-  "network": "open",
-  "allowed_hosts": [],
-  "jail_past_approval": false
+  "jail_past_approval": false,
+  "require_jail": false
 }
 ```
 
+### Profiles
+
+A profile is a named starting point. It decides `cloud_credentials`, `writes`,
+`network` and `allowed_hosts`, and any of those the file names itself
+outranks it:
+
+| Profile | Cloud credentials | Writes | Network |
+|---|---|---|---|
+| `standard` (a new install) | on | the project, temp and tool caches | open |
+| `strict` | off | the project, temp and tool caches | open |
+| `allowlist` | off | the project, temp and tool caches | `allowed_hosts` only: by default `@model-apis`, `@package-registries` and `@git-hosts` |
+
+`golem-exec install --profile strict` picks one (`--strict` is the same).
+`golem-exec status` shows the profile, any setting in the file that outranks
+it, and the policy commands get. A file with no `profile` is read as written,
+with the baseline for anything it leaves out.
+
 | Setting | What it does |
 |---|---|
+| `profile` | `standard`, `strict` or `allowlist`; see [Profiles](#profiles). |
 | `enforce` | `false` runs commands without a jail. |
 | `lockdown` | Every command loses the network, the SSH agent, Docker, cloud credentials and writes outside the project it runs in. On Windows, which can't take the network from a command, commands don't run at all. |
 | `ssh_agent` | The SSH agent and the keychain. |
 | `docker` | The Docker socket. |
-| `cloud_credentials` | `~/.aws`, gcloud, Azure, kube and the Docker, npm and PyPI logins, and the cloud tools' variables (`AWS_*`, `KUBECONFIG` and others). `golem-exec install --strict` writes `false`. |
+| `cloud_credentials` | `~/.aws`, gcloud, Azure, kube and the Docker, npm and PyPI logins, and the cloud tools' variables (`AWS_*`, `KUBECONFIG` and others). Off in the `strict` and `allowlist` profiles. |
 | `env_allow` | Secret-shaped variables to keep, by name or as a `PREFIX*`. Ignored in lockdown. |
 | `env_deny` | Variables to remove, by name or as a `PREFIX*`. |
-| `writes` | `"workspace"` keeps writes to the project (the git repository a command runs in, or its working directory outside one), temp, the tool caches and `allow_write`; `"anywhere"` denies only the protected files. A new install writes `"workspace"`; a file without the key writes anywhere. On Windows the shell runs at low integrity and the project, temp and caches are labelled low, a label they keep. |
+| `writes` | `"workspace"` keeps writes to the project (the git repository a command runs in, or its working directory outside one), temp, the tool caches and `allow_write`; `"anywhere"` denies only the protected files. Every profile keeps writes to the workspace; a file with neither the key nor a profile writes anywhere. On Windows the shell runs at low integrity and the project, temp and caches are labelled low, a label they keep. |
 | `allow_write` | More places a `"workspace"` command may write: absolute paths or `~/…`, such as `~/go/bin`. One that holds your home directory is ignored. |
 | `network` | `"allowlist"` lets commands reach only `allowed_hosts`, through a proxy; everything else, DNS included, is refused. `"open"` (the default) leaves the network alone. On Linux it uses a network namespace, or where the kernel allows none, Landlock's port rule, which lets a program that ignores the proxy reach any host on the proxy's port. Ubuntu allows a namespace only to programs AppArmor names: `sudo ~/.golem/bin/golem-exec apparmor install` adds a profile for a root-owned copy of golem-exec, which later versions keep using; `golem-exec status` says if one ever needs it run again. On Windows the network is held by firewall filters you install once from an administrator prompt, `golem-exec firewall install`; without them only programs that use the proxy are held to the list. |
-| `allowed_hosts` | `example.com`, `*.example.com` (its subdomains) or `*` (any public host, everything recorded). Any port. `localhost` lets commands reach servers on this machine, a test server they start included; without it loopback is refused. The cloud metadata address is never reachable. With the network confined, `open` and AppleScript can't hand a URL to another app on macOS. |
+| `allowed_hosts` | `example.com`, `*.example.com` (its subdomains), `*` (any public host, everything recorded), or a preset (below). Any port. `localhost` lets commands reach servers on this machine, a test server they start included; without it loopback is refused. The cloud metadata address is never reachable. With the network confined, `open` and AppleScript can't hand a URL to another app on macOS. |
 | `jail_past_approval` | `true` also jails the agents whose own approval would see only the jail's wrapper: Codex, Gemini CLI and Copilot CLI on Windows, and Devin. `golem-exec install --all-agents` writes it and adds their hooks. Off by default. |
+| `require_jail` | `true` says every agent here must be jailed; see [Requiring the jail](#requiring-the-jail). `golem-exec install --require` writes it. Off by default. |
+
+### Requiring the jail
+
+`"require_jail": true` works like Claude Code's `sandbox.failIfUnavailable` and
+Copilot CLI's managed `sandbox.failIfUnavailable`, for every agent the jail
+attaches to:
+
+- A command the jail can't hold here (Linux without Landlock) is refused
+  rather than run without it. A command an agent's own sandbox already holds
+  on macOS, where sandboxes can't nest, still runs inside that sandbox.
+- `"enforce": false` no longer turns the jail off.
+- `golem-exec status` and `golem-check` report an agent whose commands run
+  outside the jail as dangerous, and `golem-check -fail-on dangerous` fails
+  on it.
+- `golem-exec install --refresh`, which Homebrew runs after every upgrade,
+  puts back an agent's shell setting or hook that was taken out.
+
+A user can edit their own `~/.golem/shield.json`. To set it where they can't,
+an administrator deploys the same keys as managed settings, as MDM tools
+deploy Claude Code's and Copilot CLI's:
+
+| | Managed settings |
+|---|---|
+| macOS | `/Library/Application Support/Golem/managed-shield.json` |
+| Linux | `/etc/golem/managed-shield.json` |
+| Windows | `C:\Program Files\Golem\managed-shield.json` |
+
+Each key the managed file names outranks the user's file, and a `profile` there
+decides the settings it covers. `lockdown` and `require_jail` only tighten: the
+user's `true` holds against the file's `false`. On macOS and Linux the file and
+its directory must belong to root and be writable by no one else, and the file
+must not be a link; otherwise it is ignored, and `golem-exec status` says so. A
+managed file that isn't valid locks every command down, as a bad
+`shield.json` does. For example:
+
+```json
+{ "profile": "allowlist", "require_jail": true }
+```
+
+With the Golem agent, the workspace's profile is the administrator's instead:
+Sandbox → Settings → Shell commands → **Require the jail** in the console.
+
+### Host presets
+
+One entry in `allowed_hosts` can stand for the hosts a kind of work needs, so
+`"allowed_hosts": ["@package-registries", "@git-hosts", "example.com"]` is
+enough to install packages and clone:
+
+| Preset | Hosts |
+|---|---|
+| `@model-apis` | `api.anthropic.com`, `api.openai.com`, `generativelanguage.googleapis.com`, `api.mistral.ai`, `api.cohere.com`, `api.groq.com`, `api.deepseek.com`, `api.x.ai`, `openrouter.ai`, `api.together.xyz` |
+| `@package-registries` | npm (`registry.npmjs.org`, `registry.yarnpkg.com`, `repo.yarnpkg.com`), PyPI (`pypi.org`, `files.pythonhosted.org`), the Go module proxy (`proxy.golang.org`, `sum.golang.org`), crates.io (`crates.io`, `index.crates.io`, `static.crates.io`), Maven Central (`repo.maven.apache.org`, `repo1.maven.org`), RubyGems (`rubygems.org`, `index.rubygems.org`) |
+| `@git-hosts` | `github.com`, `api.github.com`, `codeload.github.com`, `*.githubusercontent.com`, `gitlab.com` |
+
+The jail expands a preset each time a command runs, so a newer version's list
+applies without editing the file. A preset this version doesn't know locks
+every command down, like any unknown value. `golem-exec status` names the
+presets and how many hosts each opens. Git over SSH is not a host the proxy
+sees; with the network confined, clone over HTTPS.
 
 Changes apply to the next command; there is nothing to restart. The jail can
 neither read nor write `~/.golem`, so the agent being watched can't loosen its
@@ -205,6 +286,8 @@ golem-check -json               # every finding, informational ones included (-w
 golem-check -html -o report.html   # one self-contained page to hand a security team
 golem-check -repo .             # only what this repository brings to anyone who clones it
 golem-check -repo . -sarif -o golem-check.sarif -fail-on suspicious   # for CI and GitHub code scanning
+golem-check -fix                # what it would change in your own settings, as a diff; changes nothing
+golem-check -fix -yes           # make those changes: backed up first, all put back if the grade drops
 ```
 
 `-repo` reads the agent files a repository carries (`.claude/`, `.mcp.json`,
@@ -212,6 +295,38 @@ golem-check -repo . -sarif -o golem-check.sarif -fail-on suspicious   # for CI a
 home directory. `-sarif` writes SARIF 2.1.0 for GitHub code scanning, and
 `-fail-on suspicious` or `-fail-on dangerous` exits 3 when a finding is at
 least that severe, so a build can stop on it.
+
+### Fixing what it finds
+
+`-fix` prints the changes to your own agent settings that would undo each
+dangerous or suspicious finding, as a diff per file, and changes nothing.
+`-fix -yes` makes them.
+
+| Finding | What `-fix` does |
+|---|---|
+| Permission prompts off or a run-everything mode: Claude Code's `bypassPermissions` default and its accepted bypass warning, Cursor CLI's `"approvalMode": "unrestricted"`, Codex's `danger-full-access` | Takes the setting out, so the agent goes back to its default, which asks |
+| Allow rules for any command, file, page or MCP tool: `Bash(*)`, `Write(*)`, `WebFetch`, `mcp__*`, Gemini CLI's `run_shell_command`, `write_file` and `web_fetch`, Devin's `exec` | Takes the rule out and keeps the narrower ones |
+| `enableAllProjectMcpServers`, and an editor's `chat.tools.global.autoApprove` | Takes it out |
+| Workspace trust off in an editor, folder trust off in Gemini CLI | Turns it back on |
+| A settings file holding a credential, or an agent's sign-in file, that other users can read | Makes it readable by you only |
+| A hook script other users can change | Takes their write permission away |
+
+It never changes a repository's files, managed or MDM policy, a file with
+comments or one that doesn't parse, a symbolic link or a folder, and it deletes
+nothing. It doesn't move a plaintext secret: where it should live instead is
+your choice, and the report names each one. The plan lists what it left alone
+and why.
+
+Before writing anything, `-fix -yes` copies each file it changes into
+`~/.golem/check-backups/<time>/`, readable by you only, with a `manifest.json`
+of every file's path and permissions. A jailed agent can't read or write
+`~/.golem`, so it can't copy a setting back. After writing, it scans again. If
+the score or the grade went down, a new dangerous or suspicious finding
+appeared, or a changed file no longer reads back, it puts every file back and
+exits 4. A file that changed after the plan was made stops it before anything
+is written. Restart your agents afterwards: some read their settings only when
+they start. `golem check -fix` does the same under the Golem agent, and the
+agent's next posture report shows the new grade.
 
 ### In GitHub Actions
 
@@ -240,22 +355,28 @@ area:
 |---|---|
 | Run modes | Permission prompts turned off, every command allowed, every folder trusted |
 | Permissions | Allow rules that let an agent run any command, write any file, fetch any page or call any MCP tool, and every cloned repository's MCP servers starting on their own |
-| MCP servers | Servers started by piping a download into a shell, reached over plain HTTP, run from an unpinned package or image, given your whole disk, or run in a privileged container |
+| MCP servers | Servers started by piping a download into a shell, reached over plain HTTP, run from an unpinned package or image, given your whole disk, or run in a privileged container; tool descriptions that hide text, tell the agent to keep things from you or send secrets out, or steer how other servers' tools are used |
 | Instructions and skills | Skills, rules files and agent instructions that tell the agent to hide things from you, send secrets somewhere, or ignore its instructions |
 | Hooks | Hooks that send data out, run a script other users can change or one that doesn't exist, or hide their own failures |
 | Secrets | Keys and tokens written into agent settings and MCP configs, especially in a repository, and agents' sign-in files other users can read |
 | Plugin sources | Plugin marketplaces a cloned repository adds, marketplaces from outside the agent's vendor, and sources fetched over plain HTTP |
-| Protections | Which agents run their commands in a sandbox or the Golem jail |
+| Protections | Which agents run their commands in a sandbox or the Golem jail; an unjailed agent is dangerous where the jail is required |
 
-It reads Claude Code (including managed settings and MDM profiles), Cursor,
-Codex, Gemini CLI, Devin, and the VS Code family of editors (VS Code, VS Code
-Insiders, VSCodium, Cursor, Windsurf, Antigravity), and the settings of each
-repository Claude Code has opened.
+It reads Claude Code (including managed settings and MDM profiles), Claude
+Desktop, Cursor, Codex, Gemini CLI, Copilot CLI, Devin, Hermes, OpenClaw, and
+the VS Code family of editors (VS Code, VS Code Insiders, VSCodium, Cursor,
+Windsurf, Antigravity), and the settings of each repository Claude Code has
+opened. Copilot CLI's run modes are command-line flags no file records, so for
+Copilot CLI it reads the MCP servers, a repository's
+`.github/copilot-instructions.md` and the shell jail.
 
-It reads files and nothing else. It never starts an MCP server, so it can't
-see the tool descriptions a server sends; the Golem agent checks those as your
-agents receive them. It names a secret's file and setting, never the secret
-itself.
+Unless you run `-fix -yes`, it reads files and nothing else. It never starts an
+MCP server. It reads a server's tool descriptions from the copy an agent wrote
+down the last time it started it (Cursor, Antigravity, the VS Code family and
+Codex keep one), and names each configured server no agent kept a copy of; the
+Golem agent checks those as your agents receive them. It names a secret's file
+and setting, never the secret itself, and a finding in a tool description names
+the server, the tool and the rule, never the text.
 
 ## With Golem
 

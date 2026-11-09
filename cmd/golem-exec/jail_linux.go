@@ -46,6 +46,9 @@ func canJail() bool { return landlockABI() >= shield.LandlockMinABI }
 func (s *shim) jailed(rec *shield.RunRecord, p shield.Policy, tmp string, argv, env []string) bool {
 	abi := landlockABI()
 	if abi < shield.LandlockMinABI {
+		if p.RequireJail {
+			return false
+		}
 		rec.Jail = shield.JailNone
 		if p.Proxied() {
 			rec.Net = shield.NetAdvisory

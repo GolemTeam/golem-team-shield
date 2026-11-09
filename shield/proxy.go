@@ -66,7 +66,7 @@ const MaxEgressRecords = 64
 func NewProxy(hosts []string) *Proxy {
 	d := &net.Dialer{Timeout: 15 * time.Second}
 	var clean []string
-	for _, h := range hosts {
+	for _, h := range ExpandHosts(hosts) {
 		if CheckHost(h) == nil {
 			clean = append(clean, strings.Trim(h, "[]"))
 		}

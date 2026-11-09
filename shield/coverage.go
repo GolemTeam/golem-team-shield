@@ -36,6 +36,9 @@ type AgentCoverage struct {
 	// Location is the file that attaches it, or would.
 	Location string `json:"location,omitempty"`
 	Detail   string `json:"detail"`
+	// PastApproval is set on an agent left out of the jail until the workspace
+	// jails agents past their own approval: only that switch changes it.
+	PastApproval bool `json:"past_approval,omitempty"`
 }
 
 // CoverageEnv is what Coverage reads, so tests can point it elsewhere.

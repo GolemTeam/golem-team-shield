@@ -15,6 +15,8 @@ func withSettings(t *testing.T, body string) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("APPDATA", filepath.Join(home, "AppData"))
 	t.Setenv("PATH", t.TempDir())
 	t.Setenv("GOLEM_INSTALL_DIR", "")
 	saved := systemBinDirs
@@ -34,7 +36,7 @@ func TestReportsPromptsOffAndSaysNothingWasSent(t *testing.T) {
 	if code := run(nil, &out, &errs); code != 0 {
 		t.Fatalf("exit %d: %s", code, errs.String())
 	}
-	for _, want := range []string{"grade D", "DANGEROUS", "claude-code", "Nothing was sent anywhere", "Not read: MCP tool descriptions", installCommand(runtime.GOOS)} {
+	for _, want := range []string{"grade D", "DANGEROUS", "claude-code", "Nothing was sent anywhere", "never starts an MCP server", installCommand(runtime.GOOS)} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("missing %q in:\n%s", want, out.String())
 		}

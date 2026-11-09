@@ -3,7 +3,10 @@
 golem-exec \- run every shell command an AI coding agent starts inside a kernel jail
 .SH SYNOPSIS
 .B golem-exec install
-.RB [ \-\-strict ]
+.RB [ \-\-profile
+.IR profile ]
+.br
+.B golem-exec install \-\-require
 .br
 .B golem-exec install \-\-refresh
 .br
@@ -89,10 +92,25 @@ It refuses where the jail cannot be built, and does nothing where the Golem
 agent manages the shield.
 Restart your agents afterwards.
 .TP
-.B install \-\-strict
+.BI "install \-\-profile " profile
 As
 .BR install ,
-and a new settings file also keeps cloud credentials out of reach.
+starting from
+.I profile
+.RB ( standard ", " strict " or " allowlist ;
+see
+.BR PROFILES )
+instead of
+.BR standard .
+On a machine that already has
+.IR ~/.golem/shield.json ,
+it sets
+.B profile
+there and takes out the settings the profile decides, keeping any set tighter
+than the profile would set it.
+.B \-\-strict
+is
+.BR "\-\-profile strict" .
 .TP
 .B install \-\-all\-agents
 As
@@ -130,8 +148,20 @@ to Landlock's port rule.
 .B apparmor remove
 takes both out again.
 .TP
+.B install \-\-require
+As
+.BR install ,
+and set
+.B require_jail
+in
+.IR ~/.golem/shield.json :
+every agent here must be jailed (see
+.BR "REQUIRING THE JAIL" ).
+.TP
 .B install \-\-refresh
-Replace an installed shim with this binary and change nothing else.
+Replace an installed shim with this binary and change nothing else, unless
+the jail is required here: then it also puts back each agent's shell setting or
+hook that was taken out.
 It does nothing when no shim is installed or the Golem agent manages the
 shield.
 Package managers run it after an upgrade, because your agents run the copy in
@@ -140,8 +170,8 @@ not the one on your PATH.
 .TP
 .B status
 Show the installed shim, Claude Code's shell setting, whether each agent's
-commands are jailed, whether the jail can be built here, the settings file, and
-the policy commands get.
+commands are jailed, whether the jail can be built here, the settings file, its
+profile and any setting that outranks it, and the policy commands get.
 .TP
 .B test
 Run a plain command through the shim, which must succeed, and a read of
@@ -160,6 +190,12 @@ Print the version.
 .I ~/.golem/shield.json
 holds the policy every command gets when no Golem agent answers.
 Changes apply to the next command.
+.TP
+.B profile
+A named starting point (see
+.BR PROFILES ).
+A new install writes
+.BR standard .
 .TP
 .B enforce
 .B false
@@ -223,9 +259,18 @@ list.
 Each
 .IR example.com ,
 .I *.example.com
-(its subdomains) or
+(its subdomains),
 .B *
-(any public host).
+(any public host), or a preset that stands for a set of hosts:
+.B @model\-apis
+(the major model APIs),
+.B @package\-registries
+(npm, PyPI, the Go module proxy, crates.io, Maven Central and RubyGems) or
+.B @git\-hosts
+(GitHub and GitLab).
+The jail expands a preset each time a command runs;
+.B status
+names each and how many hosts it opens.
 .B localhost
 opens loopback, a test server the command starts included; without it loopback
 is refused.
@@ -240,6 +285,75 @@ which would hand a URL to another app.
 A jailed command can neither read nor write
 .IR ~/.golem ,
 so the agent being watched cannot change its own jail.
+.TP
+.B require_jail
+.B true
+says every agent here must be jailed (see
+.BR "REQUIRING THE JAIL" ).
+.SH REQUIRING THE JAIL
+With
+.B require_jail
+set, a command the jail cannot hold (Linux without Landlock) is refused with
+exit status 126 rather than run without it;
+.B enforce
+.B false
+no longer turns the jail off;
+.B status
+and
+.BR golem\-check (1)
+report an agent whose commands run outside the jail as dangerous; and
+.B install \-\-refresh
+puts back an agent's attachment that was taken out.
+A command an agent's own sandbox already holds on macOS still runs in that
+sandbox.
+.PP
+To set it where a user cannot edit it, an administrator writes the same keys
+to the managed settings,
+.I /Library/Application Support/Golem/managed\-shield.json
+on macOS,
+.I /etc/golem/managed\-shield.json
+on Linux, or
+.I C:\eProgram Files\eGolem\emanaged\-shield.json
+on Windows.
+Each key it names outranks
+.IR ~/.golem/shield.json ;
+.B lockdown
+and
+.B require_jail
+only tighten.
+On macOS and Linux the file and its directory must belong to root and be
+writable by no one else, and the file must not be a link, or it is ignored.
+.SH PROFILES
+A profile decides
+.BR cloud_credentials ,
+.BR writes ,
+.B network
+and
+.BR allowed_hosts ;
+any of those the file names itself outranks it.
+A file with no
+.B profile
+is read as written.
+.TP
+.B standard
+Writes kept to the project, temp and the tool caches; cloud credentials and
+the network open.
+.TP
+.B strict
+As
+.BR standard ,
+without cloud credentials.
+.TP
+.B allowlist
+As
+.BR strict ,
+with the network held to
+.BR allowed_hosts ,
+which it sets to
+.BR @model\-apis ,
+.B @package\-registries
+and
+.BR @git\-hosts .
 A setting this version does not know, or a file that is not valid JSON, locks
 every command down until it is fixed.
 .SH FILES
@@ -254,6 +368,9 @@ links (on Windows,
 .TP
 .I ~/.golem/shield.json
 The settings.
+.TP
+.IR "/Library/Application Support/Golem/managed\-shield.json" ", " /etc/golem/managed\-shield.json
+The managed settings, which outrank the user's.
 .TP
 .I ~/.claude/settings.json
 Where Claude Code is pointed at the shim.

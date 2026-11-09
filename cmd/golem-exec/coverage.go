@@ -15,11 +15,16 @@ func (s *setup) statusAgents() {
 		fmt.Fprintln(s.stdout, "agents       none here that the jail can attach to")
 		return
 	}
+	required, _ := shield.JailRequired(s.home, s.managedSettings())
 	for i, c := range cov {
 		label := "agents"
 		if i > 0 {
 			label = ""
 		}
-		fmt.Fprintf(s.stdout, "%-12s %s [%s]\n", label, c.Detail, c.Coverage)
+		mark := string(c.Coverage)
+		if required && c.Coverage != shield.Jailed {
+			mark += ", DANGEROUS: the jail is required here"
+		}
+		fmt.Fprintf(s.stdout, "%-12s %s [%s]\n", label, c.Detail, mark)
 	}
 }

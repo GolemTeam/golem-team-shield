@@ -50,6 +50,9 @@ type Policy struct {
 	// rewrite into it the commands of agents whose own approval would then see
 	// only the rewrite.
 	JailPastApproval bool `json:"jail_past_approval,omitempty"`
+	// RequireJail refuses a command the jail can't hold rather than run it
+	// without one.
+	RequireJail bool `json:"require_jail,omitempty"`
 }
 
 func AllGrants() Grants { return Grants{Agent: true, Docker: true, Cloud: true} }

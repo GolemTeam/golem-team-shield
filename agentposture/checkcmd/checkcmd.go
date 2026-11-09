@@ -24,11 +24,13 @@ type Options struct {
 	Machine func() agentposture.Result
 	// Footer ends the text report of a machine scan.
 	Footer func(out io.Writer) error
+	// Env is the machine Machine scans, for -fix; DefaultEnv when nil.
+	Env func() agentposture.Env
 }
 
 // Run runs the check with args and returns its exit code: 0 when the report
 // was written, 1 when it could not be, 2 for a usage error, 3 when -fail-on
-// found something at least that severe.
+// found something at least that severe, 4 when -fix -yes put every file back.
 func Run(args []string, stdout, stderr io.Writer, o Options) int {
 	fs := flag.NewFlagSet(o.Name, flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -40,6 +42,8 @@ func Run(args []string, stdout, stderr io.Writer, o Options) int {
 	outPath := fs.String("o", "", "write the report to this file instead of standard output")
 	failOn := fs.String("fail-on", "none", "exit 3 if a finding is at least this severe: suspicious, dangerous or none")
 	showVersion := fs.Bool("version", false, "print the version")
+	fix := fs.Bool("fix", false, "print the changes to your own agent settings that undo their risky findings, file by file, and change nothing")
+	yes := fs.Bool("yes", false, "with -fix, make the changes: each file is backed up first, and every one is put back if the grade drops")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -52,6 +56,14 @@ func Run(args []string, stdout, stderr io.Writer, o Options) int {
 		fmt.Fprintln(stderr, o.Name+": -fail-on takes suspicious, dangerous or none")
 		return 2
 	}
+	if *yes && !*fix {
+		fmt.Fprintln(stderr, o.Name+": -yes goes with -fix")
+		return 2
+	}
+	if *fix && (*repo != "" || *asJSON || *withScore || *asSARIF || *asHTML || threshold >= 0) {
+		fmt.Fprintln(stderr, o.Name+": -fix changes only this machine's own settings and prints its own plan: it takes -yes and -o")
+		return 2
+	}
 	var res agentposture.Result
 	if *repo != "" {
 		if info, err := os.Stat(*repo); err != nil || !info.IsDir() {
@@ -59,7 +71,7 @@ func Run(args []string, stdout, stderr io.Writer, o Options) int {
 			return 2
 		}
 		res = agentposture.ScanRepo(*repo)
-	} else {
+	} else if !*fix {
 		res = o.Machine()
 	}
 	out := stdout
@@ -71,6 +83,9 @@ func Run(args []string, stdout, stderr io.Writer, o Options) int {
 		}
 		defer f.Close()
 		out = f
+	}
+	if *fix {
+		return runFix(out, stderr, o, *yes)
 	}
 	if err := write(out, res, format{*asJSON, *withScore, *asSARIF, *asHTML}, *repo != "", o); err != nil {
 		fmt.Fprintln(stderr, o.Name+": could not write the report")
@@ -115,10 +130,11 @@ func write(out io.Writer, res agentposture.Result, f format, repo bool, o Option
 }
 
 // failing reports a finding at or above threshold, by agentposture.Rank.
-// Protections are credit, not findings.
+// Protections are credit, not findings, except one the machine requires and
+// lacks, which ShellJailItems makes dangerous.
 func failing(res agentposture.Result, threshold int) bool {
 	for _, it := range res.Items {
-		if it.Area != agentposture.AreaProtections && agentposture.Rank(it.Severity) <= threshold {
+		if (it.Area != agentposture.AreaProtections || it.Severity == agentposture.Dangerous) && agentposture.Rank(it.Severity) <= threshold {
 			return true
 		}
 	}
@@ -126,18 +142,35 @@ func failing(res agentposture.Result, threshold int) bool {
 }
 
 // ShellJailItems are the shell jail's coverage as the report's protections:
-// credit for each agent whose commands it jails.
-func ShellJailItems(cov []shield.AgentCoverage) []agentposture.Item {
+// credit for each agent whose commands it jails. Where the machine requires
+// the jail (requiredBy says who does), an agent whose commands can run
+// outside it is dangerous.
+func ShellJailItems(cov []shield.AgentCoverage, requiredBy string) []agentposture.Item {
 	items := make([]agentposture.Item, 0, len(cov))
 	for _, c := range cov {
-		sev := agentposture.Suspicious
-		if c.Coverage == shield.Jailed {
+		sev, detail := agentposture.Suspicious, c.Detail
+		switch {
+		case c.Coverage == shield.Jailed:
 			sev = agentposture.Info
+		case requiredBy != "":
+			sev = agentposture.Dangerous
+			detail += "; this machine requires the jail (" + requiredBy + ")"
 		}
 		items = append(items, agentposture.Item{
 			Client: c.Client, Area: agentposture.AreaProtections, Check: "shell_jail", Severity: sev,
-			Location: c.Location, Setting: "shell", Value: string(c.Coverage), Detail: c.Detail,
+			Location: c.Location, Setting: "shell", Value: string(c.Coverage), Detail: detail,
 		})
 	}
 	return items
+}
+
+// JailRequiredBy says who requires this machine's agents to be jailed, or ""
+// when nothing does: the administrator's managed settings, the Golem agent's
+// workspace, or shield.json.
+func JailRequiredBy(home, goos string) string {
+	on, by := shield.JailRequired(home, shield.LoadManaged(shield.ManagedConfigPath(goos), shield.AdminOwned))
+	if !on {
+		return ""
+	}
+	return by
 }

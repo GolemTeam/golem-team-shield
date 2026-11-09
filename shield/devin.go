@@ -106,6 +106,7 @@ func devinCoverage(env CoverageEnv) (AgentCoverage, bool) {
 	c := AgentCoverage{Client: "devin", Label: "Devin", Coverage: NotJailed, Location: tilde(env.Home, path)}
 	if !JailsPastApproval(env.Home) {
 		c.Detail = "Golem doesn't rewrite Devin's shell commands: its own approval rules would then see only the jail" + pastApprovalHint
+		c.PastApproval = true
 		return c, true
 	}
 	hooked := false

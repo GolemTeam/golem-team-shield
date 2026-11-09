@@ -120,9 +120,9 @@ func TestOnWindowsTheHookClientsAreJailedOnlyWithTheSwitch(t *testing.T) {
 			switch {
 			case c == nil:
 				t.Fatalf("%s: no line", tc.client)
-			case !on && (c.Coverage != NotJailed || !strings.Contains(c.Detail, "would jail them anyway")):
+			case !on && (c.Coverage != NotJailed || !c.PastApproval || !strings.Contains(c.Detail, "would jail them anyway")):
 				t.Errorf("%s off: %s %q", tc.client, c.Coverage, c.Detail)
-			case on && (c.Coverage != Jailed || !strings.Contains(c.Detail, "past its own approval")):
+			case on && (c.Coverage != Jailed || c.PastApproval || !strings.Contains(c.Detail, "past its own approval")):
 				t.Errorf("%s on: %s %q", tc.client, c.Coverage, c.Detail)
 			}
 		}

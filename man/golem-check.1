@@ -1,4 +1,4 @@
-.TH GOLEM-CHECK 1 2026-11-03 golem-team-shield "User Commands"
+.TH GOLEM-CHECK 1 2026-11-09 golem-team-shield "User Commands"
 .SH NAME
 golem-check \- grade how the AI coding agents on this machine are set up
 .SH SYNOPSIS
@@ -11,6 +11,11 @@ golem-check \- grade how the AI coding agents on this machine are set up
 .RB [ \-fail\-on
 .IR severity ]
 .br
+.B golem-check \-fix
+.RB [ \-yes ]
+.RB [ \-o
+.IR file ]
+.br
 .B golem-check \-version
 .SH DESCRIPTION
 .B golem-check
@@ -18,18 +23,42 @@ reads the settings of the AI coding agents on this machine, grades them out of
 100, scores each area, and prints what to fix, worst first.
 The areas are run modes (permission prompts off, every command allowed, every
 folder trusted), permissions (allow rules for any command, file, page or MCP
-tool), MCP servers (how each is started and reached), instructions and skills
+tool), MCP servers (how each is started and reached, and what the tool
+descriptions an agent stored tell it), instructions and skills
 (text that tells the agent to hide things, send secrets out, or ignore its
 instructions), hooks, secrets written into settings, plugin sources, and
 protections (which agents run their commands in a sandbox or the Golem jail).
+Where the jail is required
+.RB ( require_jail
+in the managed settings or
+.IR ~/.golem/shield.json ,
+or the Golem agent's workspace), an agent whose commands run outside it is
+dangerous, and
+.B "\-fail\-on dangerous"
+fails on it.
 .PP
 It reads Claude Code (including its managed settings and MDM profiles),
-Cursor, Codex, Gemini CLI, Devin, and the VS Code family of editors (VS Code,
-VS Code Insiders, VSCodium, Cursor, Windsurf, Antigravity), and the settings of
-each repository Claude Code has opened.
+Claude Desktop, Cursor, Codex, Gemini CLI, Copilot CLI, Devin, Hermes,
+OpenClaw, and the VS Code family of editors (VS Code, VS Code Insiders,
+VSCodium, Cursor, Windsurf, Antigravity), and the settings of each repository
+Claude Code has opened.
+Copilot CLI's run modes are command-line flags no file records; for it,
+.B golem-check
+reads the MCP servers, a repository's
+.I .github/copilot-instructions.md
+and the shell jail.
 .PP
-It reads files and nothing else, and sends nothing anywhere.
-It never starts an MCP server, so it does not see the tools a server describes.
+Unless it is run with
+.BR "\-fix \-yes" ,
+it reads files and nothing else.
+It sends nothing anywhere.
+It never starts an MCP server.
+It reads the tools a server describes from the copy an agent wrote down the
+last time it started the server (Cursor, Antigravity, the VS Code family and
+Codex keep one), and lists each configured server no agent kept a copy of as
+not read.
+A finding in a tool description names the server, the tool and the rule,
+never the text.
 It names a secret's file and setting, never the secret.
 .SH OPTIONS
 .TP
@@ -92,13 +121,68 @@ or
 .B none
 (the default) never does.
 .TP
+.B \-fix
+Print, as a diff per file, the changes to your own agent settings that would
+undo each dangerous or suspicious finding, and change nothing.
+A run mode that stops an agent asking (Claude Code's
+.B bypassPermissions
+default and accepted bypass warning, Cursor CLI's
+.B unrestricted
+approval mode, Codex's
+.BR danger\-full\-access )
+and an allow rule for any command, file, page or MCP tool are taken out, so the
+agent goes back to its default, which asks.
+.B enableAllProjectMcpServers
+and an editor's
+.B chat.tools.global.autoApprove
+are taken out; workspace trust and Gemini CLI's folder trust are turned back on.
+A settings or sign-in file holding a credential that other users can read
+becomes readable by its owner only, and a hook script other users can change
+loses their write permission.
+It never changes a repository's files, managed or MDM policy, a file with
+comments or one that does not parse, a symbolic link or a folder; it deletes
+nothing and moves no secret.
+The plan ends with what it left alone and why.
+It takes only
+.B \-yes
+and
+.BR \-o .
+.TP
+.B \-yes
+With
+.BR \-fix ,
+make the changes.
+Each file whose contents change is first copied into
+.IR ~/.golem/check\-backups/<time>/ ,
+and the check then scans again.
+If the score or the grade went down, a new dangerous or suspicious finding
+appeared, or a changed file no longer reads back, every file is put back and
+the exit status is 4.
+A file that changed after the plan was made stops it before anything is
+written.
+.TP
 .B \-version
 Print the version.
 .SH EXIT STATUS
-0 when the report was written, whatever it found; 1 when it could not be
-written; 2 for a usage error; 3 when
+0 when the report was written, whatever it found, or when
+.B \-fix
+made or planned its changes; 1 when it could not write the report or a file; 2
+for a usage error; 3 when
 .B \-fail\-on
-found something at least that severe.
+found something at least that severe; 4 when
+.B "\-fix \-yes"
+put every file back because the result was worse.
+.SH FILES
+.TP
+.I ~/.golem/check\-backups/<time>/
+The files
+.B "\-fix \-yes"
+changed, as they were, under their paths relative to the home directory, and
+.IR manifest.json ,
+which lists each file's path and permissions.
+Owner-only.
+A jailed agent can neither read nor write
+.IR ~/.golem .
 .SH GITHUB ACTIONS
 The repository is also a GitHub Action that runs
 .B golem-check \-repo

@@ -106,6 +106,7 @@ func vscodeCoverage(env CoverageEnv) (AgentCoverage, bool) {
 		c.Detail = "VS Code's agent's terminal profile is set to " + cur + ", so it was left alone"
 	case !JailsPastApproval(env.Home):
 		c.Detail = "VS Code's agent runs its commands without the Golem jail: its hook would hide them from its own approval rules" + pastApprovalHint + ", through its terminal profile"
+		c.PastApproval = true
 	default:
 		c.Detail = "VS Code's agent runs its commands without the Golem jail: no terminal profile names the Golem shim"
 	}

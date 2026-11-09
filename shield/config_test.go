@@ -39,7 +39,7 @@ func TestANewInstallKeepsWritesToTheProjectAndAnOldFileDoesNot(t *testing.T) {
 }
 
 func TestStrictTakesTheCloudCredentialsAwayAndKeepsWritesToTheWorkspace(t *testing.T) {
-	p := StrictConfig().Policy()
+	p := NewConfig(ProfileStrict).Policy()
 	if g := p.Grants; g.Cloud || !g.Agent || !g.Docker {
 		t.Errorf("strict grants %+v", g)
 	}
@@ -55,15 +55,20 @@ func TestLockdownIsATaintedSession(t *testing.T) {
 	}
 }
 
-func TestDefaultConfigNamesEverySetting(t *testing.T) {
+func TestDefaultConfigNamesEverySettingItsProfileLeavesAlone(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "shield.json")
 	if err := WriteConfig(path, DefaultConfig()); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(path)
-	for _, key := range []string{"enforce", "lockdown", "ssh_agent", "docker", "cloud_credentials", "env_allow", "env_deny", "writes", "allow_write", "network", "allowed_hosts"} {
+	for _, key := range []string{"profile", "enforce", "lockdown", "ssh_agent", "docker", "env_allow", "env_deny", "allow_write", "jail_past_approval", "require_jail"} {
 		if !strings.Contains(string(b), `"`+key+`"`) {
 			t.Errorf("%s is missing from the default file:\n%s", key, b)
+		}
+	}
+	for _, key := range ProfileSettings {
+		if strings.Contains(string(b), `"`+key+`"`) {
+			t.Errorf("%s is in the default file, where it would outrank the profile:\n%s", key, b)
 		}
 	}
 }
@@ -76,7 +81,7 @@ func TestAnUnreadableFileGetsTheTightestPolicy(t *testing.T) {
 
 func TestConfigRoundTripsAndRefusesWhatItDoesNotKnow(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".golem", "shield.json")
-	want := StrictConfig()
+	want := NewConfig(ProfileStrict)
 	want.EnvAllow = []string{"MY_TOKEN"}
 	want.EnvDeny = []string{"INTERNAL_*"}
 	want.Network, want.AllowedHosts = NetworkAllowlist, []string{"github.com", "*.npmjs.org"}
@@ -101,6 +106,7 @@ func TestConfigRoundTripsAndRefusesWhatItDoesNotKnow(t *testing.T) {
 		"a URL for a host":   `{"allowed_hosts": ["https://github.com"]}`,
 		"a relative path":    `{"allow_write": ["build"]}`,
 		"home itself":        `{"allow_write": ["~/"]}`,
+		"an unknown profile": `{"profile": "paranoid"}`,
 	} {
 		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 			t.Fatal(err)

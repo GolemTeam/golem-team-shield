@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -23,10 +25,14 @@ import (
 
 const cliUsage = `usage: golem-exec <command>
 
-  install [--strict]   jail the shell commands Claude Code, Codex, Gemini CLI, Cursor and Copilot CLI run
+  install [--profile standard|strict|allowlist]
+                       jail the shell commands Claude Code, Codex, Gemini CLI, Cursor and Copilot CLI run,
+                       starting from a profile (standard on a new install; --strict is --profile strict)
   install --all-agents also jail the agents whose own approval would see only the jail
                        (Codex, Gemini CLI and Copilot CLI on Windows, and Devin): "jail_past_approval"
-  install --refresh    update an installed shim to this binary, and nothing else
+  install --require    also say that agents here must be jailed: "require_jail"
+  install --refresh    update an installed shim to this binary; where the jail is required,
+                       also put back an agent's shell setting or hook that was taken out
   status               show what is installed and the policy commands get
   firewall install     on Windows, as administrator: hold an allowed-hosts network to its list
   firewall remove      take the shield's firewall filters out again
@@ -36,9 +42,12 @@ const cliUsage = `usage: golem-exec <command>
   uninstall [--purge]  put the agents' shells back (--purge also removes ~/.golem/shield.json)
   version              print the version
 
-Settings: ~/.golem/shield.json. A new install keeps writes to the project, temp
-and tool caches ("writes": "workspace"); --strict also keeps cloud credentials
-out of reach.
+Settings: ~/.golem/shield.json. A profile decides cloud_credentials, writes,
+network and allowed_hosts, and a setting the file names itself outranks it:
+  standard   writes kept to the project, temp and tool caches; the network open
+  strict     standard without cloud credentials
+  allowlist  strict, with only allowed_hosts reachable: by default @model-apis,
+             @package-registries and @git-hosts, presets the jail expands
 `
 
 func isSelf(invoked string) bool {
@@ -62,6 +71,14 @@ type setup struct {
 	namespaces func() shield.Namespaces
 	agentRuns  func() bool
 	selfTest   func(shim, command string) (int, error)
+	managed    func() shield.Managed
+}
+
+func (s *setup) managedSettings() shield.Managed {
+	if s.managed == nil {
+		return shield.Managed{}
+	}
+	return s.managed()
 }
 
 func newSetup(witness string) *setup {
@@ -73,6 +90,7 @@ func newSetup(witness string) *setup {
 	s := &setup{
 		home: home, goos: runtime.GOOS, exe: exe, loginShell: os.Getenv("SHELL"), codexHome: os.Getenv("CODEX_HOME"), witness: witness,
 		stdin: os.Stdin, stdout: os.Stdout, stderr: os.Stderr, canJail: canJail, firewallOn: firewallInstalled, namespaces: shield.LinuxNamespaces, selfTest: runThroughShim,
+		managed: loadManaged,
 	}
 	s.agentRuns = s.agentPresent
 	return s
@@ -83,16 +101,34 @@ func runCommand(s *setup, args []string) int {
 		fmt.Fprint(s.stderr, cliUsage)
 		return 2
 	}
-	flags := map[string]bool{}
-	for _, a := range args[1:] {
-		flags[strings.TrimLeft(a, "-")] = true
+	flags, values := map[string]bool{}, map[string]string{}
+	for i := 1; i < len(args); i++ {
+		name := strings.TrimLeft(args[i], "-")
+		if k, v, ok := strings.Cut(name, "="); ok {
+			values[k] = v
+			continue
+		}
+		if name == "profile" && i+1 < len(args) {
+			values[name] = args[i+1]
+			i++
+			continue
+		}
+		flags[name] = true
 	}
 	switch args[0] {
 	case "install":
 		if flags["refresh"] {
 			return s.refresh()
 		}
-		return s.install(flags["strict"], flags["all-agents"])
+		profile := values["profile"]
+		if profile == "" && flags["strict"] {
+			profile = shield.ProfileStrict
+		}
+		if err := shield.CheckProfile(profile); err != nil || flags["profile"] {
+			fmt.Fprintf(s.stderr, "golem-exec: --profile takes one of %s\n", strings.Join(shield.Profiles(), ", "))
+			return 2
+		}
+		return s.install(profile, flags["all-agents"], flags["require"])
 	case "uninstall":
 		return s.uninstall(flags["purge"])
 	case "status":
@@ -167,7 +203,7 @@ func (s *setup) agentPresent() bool {
 const agentManages = "The Golem agent runs the shield on this machine and decides its policy.\n" +
 	"Its settings are in the console, or `golem lockdown` with no account. Check it with `golem doctor`.\n"
 
-func (s *setup) install(strict, allAgents bool) int {
+func (s *setup) install(profile string, allAgents, require bool) int {
 	if s.agentRuns() {
 		fmt.Fprint(s.stdout, agentManages)
 		return 0
@@ -184,23 +220,29 @@ func (s *setup) install(strict, allAgents bool) int {
 
 	cfgPath := shield.ConfigPath(s.home)
 	if _, found, err := shield.LoadConfig(cfgPath); !found {
-		cfg := shield.DefaultConfig()
-		if strict {
-			cfg = shield.StrictConfig()
-		}
+		cfg := shield.NewConfig(cmp.Or(profile, shield.ProfileStandard))
 		if err := shield.WriteConfig(cfgPath, cfg); err != nil {
 			fmt.Fprintf(s.stderr, "golem-exec: could not write %s: %v\n", cfgPath, err)
 			return 1
 		}
-		fmt.Fprintf(s.stdout, "Wrote the settings to %s\n", cfgPath)
+		fmt.Fprintf(s.stdout, "Wrote the settings to %s, with the %s profile: %s\n", cfgPath, cfg.Profile, shield.ProfileDescription(cfg.Profile))
 	} else if err != nil {
 		fmt.Fprintf(s.stderr, "golem-exec: %s is not valid (%v); every command is locked down until it is fixed\n", cfgPath, err)
-	} else if strict {
-		fmt.Fprintf(s.stdout, "Kept your settings in %s; set \"cloud_credentials\": false there for --strict\n", cfgPath)
+	} else if profile != "" {
+		if err := s.setProfile(cfgPath, profile); err != nil {
+			fmt.Fprintf(s.stderr, "golem-exec: could not set the profile in %s: %v\n", cfgPath, err)
+			return 1
+		}
 	}
 	if allAgents {
 		if err := s.jailPastApproval(cfgPath); err != nil {
 			fmt.Fprintf(s.stderr, "golem-exec: could not set \"jail_past_approval\" in %s: %v\n", cfgPath, err)
+			return 1
+		}
+	}
+	if require {
+		if err := s.requireJail(cfgPath); err != nil {
+			fmt.Fprintf(s.stderr, "golem-exec: could not set \"require_jail\" in %s: %v\n", cfgPath, err)
 			return 1
 		}
 	}
@@ -234,6 +276,59 @@ func (s *setup) install(strict, allAgents bool) int {
 	return code
 }
 
+// setProfile names the profile in the settings and takes out the settings it
+// decides, so it applies, keeping those set tighter than it would set them.
+// The rest of the file stays as the person wrote it.
+func (s *setup) setProfile(cfgPath, profile string) error {
+	c, _, err := shield.LoadConfig(cfgPath)
+	if err != nil {
+		return err
+	}
+	doc, _, err := jsonobject.ReadFile(cfgPath)
+	if err != nil {
+		return err
+	}
+	keep := c.TighterThan(profile)
+	name, _ := json.Marshal(profile)
+	doc.Set("profile", name)
+	var dropped []string
+	for _, k := range shield.ProfileSettings {
+		if _, ok := doc.Get(k); ok && !slices.Contains(keep, k) {
+			doc.Remove(k)
+			dropped = append(dropped, k)
+		}
+	}
+	if err := jsonobject.WriteFile(cfgPath, doc); err != nil {
+		return err
+	}
+	fmt.Fprintf(s.stdout, "Set the profile in %s to %s: %s\n", cfgPath, profile, shield.ProfileDescription(profile))
+	if len(dropped) > 0 {
+		fmt.Fprintf(s.stdout, "Took out %s, which the profile now decides\n", strings.Join(dropped, ", "))
+	}
+	if len(keep) > 0 {
+		fmt.Fprintf(s.stdout, "Kept %s: set tighter than the profile would, so they still outrank it\n", strings.Join(keep, ", "))
+	}
+	return nil
+}
+
+// requireJail sets require_jail in the settings, leaving the rest of the file
+// as the person wrote it.
+func (s *setup) requireJail(cfgPath string) error {
+	if c, _, err := shield.LoadConfig(cfgPath); err != nil || c.RequireJail {
+		return err
+	}
+	doc, _, err := jsonobject.ReadFile(cfgPath)
+	if err != nil {
+		return err
+	}
+	doc.Set("require_jail", json.RawMessage("true"))
+	if err := jsonobject.WriteFile(cfgPath, doc); err != nil {
+		return err
+	}
+	fmt.Fprintln(s.stdout, "Agents here must be jailed: a command the jail can't hold is refused, and an unjailed agent is reported dangerous")
+	return nil
+}
+
 // jailPastApproval sets jail_past_approval in the settings, leaving the rest
 // of the file as the person wrote it.
 func (s *setup) jailPastApproval(cfgPath string) error {
@@ -253,8 +348,10 @@ func (s *setup) jailPastApproval(cfgPath string) error {
 }
 
 // refresh replaces an installed shim with this binary, so upgrading the copy a
-// package manager keeps also upgrades the one Claude Code runs. It touches
-// nothing else, does nothing where the agent manages the shield or nothing is
+// package manager keeps also upgrades the one Claude Code runs. Where the jail
+// is required it also puts back what attaches the jail to each agent, so an
+// agent whose shell setting or hook was taken out is jailed again at the next
+// upgrade. It does nothing where the agent manages the shield or nothing is
 // installed, and never fails: a package manager runs it after every upgrade.
 func (s *setup) refresh() int {
 	if s.agentRuns() {
@@ -272,6 +369,17 @@ func (s *setup) refresh() int {
 		return 0
 	}
 	fmt.Fprintf(s.stdout, "Updated the shim in %s to golem-exec %s\n", s.binDir(), version)
+	if on, by := shield.JailRequired(s.home, s.managedSettings()); on {
+		fmt.Fprintf(s.stdout, "The jail is required here (%s); putting back any agent's attachment that was taken out\n", by)
+		if changes, err := s.editSettings(s.claudeShell().Wire); err != nil {
+			fmt.Fprintf(s.stderr, "golem-exec: could not edit %s: %v\n", s.settingsPath(), err)
+		} else {
+			for _, c := range changes {
+				fmt.Fprintf(s.stdout, "Claude Code: %s\n", c)
+			}
+		}
+		s.wireAgents(false)
+	}
 	return 0
 }
 
@@ -409,18 +517,38 @@ func (s *setup) status() int {
 	}
 
 	cfgPath := shield.ConfigPath(s.home)
-	cfg, found, err := shield.LoadConfig(cfgPath)
+	m := s.managedSettings()
+	switch {
+	case m.Ignored != nil:
+		fmt.Fprintf(s.stdout, "managed      %s is ignored: %v\n", m.Path, m.Ignored)
+	case m.Err != nil:
+		fmt.Fprintf(s.stdout, "managed      %s is not valid (%v), so every command is locked down\n", m.Path, m.Err)
+	case m.Found:
+		fmt.Fprintf(s.stdout, "managed      %s, which outranks the user's settings: %s\n", m.Path, strings.Join(m.Keys, ", "))
+	}
+	cfg, found, err := shield.MachineConfig(s.home, m)
 	switch {
 	case !found:
 		fmt.Fprintln(s.stdout, "settings     none, so commands get the baseline")
 	case err != nil:
-		fmt.Fprintf(s.stdout, "settings     %s is not valid (%v), so every command is locked down\n", cfgPath, err)
+		if m.Err == nil {
+			fmt.Fprintf(s.stdout, "settings     %s is not valid (%v), so every command is locked down\n", cfgPath, err)
+		}
 		cfg = shield.Config{Lockdown: true}
 	default:
 		fmt.Fprintf(s.stdout, "settings     %s\n", cfgPath)
+		if cfg.Profile != "" {
+			fmt.Fprintf(s.stdout, "profile      %s: %s\n", cfg.Profile, shield.ProfileDescription(cfg.Profile))
+			if o := cfg.Overrides(); len(o) > 0 {
+				fmt.Fprintf(s.stdout, "             outranked by the file's own %s\n", strings.Join(o, ", "))
+			}
+		}
 	}
 	p := cfg.Policy()
 	g := p.Effective()
+	if on, by := shield.JailRequired(s.home, m); on {
+		fmt.Fprintf(s.stdout, "required     every agent here must be jailed (%s): a command the jail can't hold is refused\n", by)
+	}
 	fmt.Fprintf(s.stdout, "policy       jail %s, lockdown %s\n", onOff(p.Enforce), onOff(p.Tainted()))
 	fmt.Fprintf(s.stdout, "             ssh agent %s, docker %s, cloud credentials %s\n", onOff(g.Agent), onOff(g.Docker), onOff(g.Cloud))
 	if len(p.EnvAllow)+len(p.EnvDeny) > 0 {
@@ -453,7 +581,7 @@ func (s *setup) statusConfinement(p shield.Policy) {
 	}
 	hosts := "none yet: add them to \"allowed_hosts\""
 	if len(p.AllowedHosts) > 0 {
-		hosts = strings.Join(p.AllowedHosts, ", ")
+		hosts = describeHosts(p.AllowedHosts)
 	}
 	fmt.Fprintf(s.stdout, "network      allowed hosts only, through a proxy: %s\n", hosts)
 	switch s.goos {
@@ -476,6 +604,17 @@ func (s *setup) statusConfinement(p shield.Policy) {
 			s.namespaceFix(ns)
 		}
 	}
+}
+
+func describeHosts(hosts []string) string {
+	parts := make([]string, len(hosts))
+	for i, h := range hosts {
+		parts[i] = h
+		if p, ok := shield.HostPresetNamed(h); ok {
+			parts[i] = fmt.Sprintf("%s (%d hosts)", h, len(p.Hosts))
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 // statusProjectFiles says whether the agents' project files (hooks, MCP
@@ -521,7 +660,7 @@ func (s *setup) test() int {
 		fmt.Fprintln(s.stderr, "golem-exec: the shim is not installed (run: golem-exec install)")
 		return 1
 	}
-	cfg, _, err := shield.LoadConfig(shield.ConfigPath(s.home))
+	cfg, _, err := shield.MachineConfig(s.home, s.managedSettings())
 	if err == nil && !cfg.Policy().Enforce {
 		fmt.Fprintln(s.stdout, "Self-test skipped: \"enforce\" is false in ~/.golem/shield.json, so commands run without a jail.")
 		return 0

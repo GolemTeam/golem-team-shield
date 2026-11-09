@@ -44,6 +44,8 @@ type ConfigScan struct {
 	Scanned    map[string]bool
 	Partial    bool
 	Read       map[string]bool
+	// Servers is every MCP server a config names, as often as it names it.
+	Servers []ServerRef
 }
 
 type configFile struct{ client, scope, path string }
@@ -255,6 +257,7 @@ func (s *configScanner) mcpConfigPaths() []mcpFile {
 		user("cursor", filepath.Join(home, ".cursor", "mcp.json"), ""),
 		user("windsurf", filepath.Join(home, ".codeium", "windsurf", "mcp_config.json"), ""),
 		user("gemini-cli", filepath.Join(home, ".gemini", "settings.json"), ""),
+		user("copilot", filepath.Join(home, ".copilot", "mcp-config.json"), ""),
 	}
 	paths = append(paths, s.mcpFiles...)
 	switch s.env.GOOS {
@@ -356,6 +359,7 @@ func (s *configScanner) scanServers(f configFile, info os.FileInfo, servers map[
 	loose := info != nil && unixModes && info.Mode().Perm()&0o044 != 0
 	for _, name := range names {
 		d := servers[name]
+		s.out.Servers = append(s.out.Servers, ServerRef{f.client, name})
 		line := strings.TrimSpace(d.Command + " " + strings.Join(d.Args, " "))
 		if pipeToShellRe.MatchString(line) {
 			s.add(f, "mcp_pipe_to_shell", Dangerous, name, "starts by piping a download into a shell")

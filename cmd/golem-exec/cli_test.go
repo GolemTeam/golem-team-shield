@@ -68,7 +68,7 @@ func (f *fakeSetup) settingsEnv(t *testing.T) map[string]string {
 
 func TestInstallSetsUpTheShimTheSettingsAndClaudeCode(t *testing.T) {
 	f := newFakeSetup(t, "darwin")
-	if code := f.install(false, false); code != 0 {
+	if code := f.install("", false, false); code != 0 {
 		t.Fatalf("exit %d: %s", code, f.errs.String())
 	}
 	for _, name := range []string{"golem-exec", "golem-zsh", "golem-bash"} {
@@ -96,7 +96,7 @@ func TestInstallSetsUpTheShimTheSettingsAndClaudeCode(t *testing.T) {
 	}
 
 	f.out.Reset()
-	if code := f.install(false, false); code != 0 || strings.Contains(f.out.String(), "Claude Code: ") {
+	if code := f.install("", false, false); code != 0 || strings.Contains(f.out.String(), "Claude Code: ") {
 		t.Errorf("a second install changed Claude Code again:\n%s", f.out.String())
 	}
 }
@@ -104,7 +104,7 @@ func TestInstallSetsUpTheShimTheSettingsAndClaudeCode(t *testing.T) {
 func TestStrictKeepsTheCloudCredentialsOut(t *testing.T) {
 	f := newFakeSetup(t, "linux")
 	f.loginShell = "/usr/bin/bash"
-	if code := f.install(true, false); code != 0 {
+	if code := f.install(shield.ProfileStrict, false, false); code != 0 {
 		t.Fatalf("exit %d: %s", code, f.errs.String())
 	}
 	if cfg, _, _ := shield.LoadConfig(shield.ConfigPath(f.home)); cfg.Policy().Grants.Cloud || !cfg.Policy().ConfinedWrites() {
@@ -119,7 +119,7 @@ func TestInstallLeavesTheUsersOwnShellAndSaysHow(t *testing.T) {
 	f := newFakeSetup(t, hostLayout())
 	shellVar := f.claudeShell().Var()
 	writeFile(t, f.settingsPath(), `{"env": {"`+shellVar+`": "/opt/homebrew/bin/fish"}}`)
-	if code := f.install(false, false); code != 0 {
+	if code := f.install("", false, false); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
 	if got := f.settingsEnv(t)[shellVar]; got != "/opt/homebrew/bin/fish" {
@@ -133,7 +133,7 @@ func TestInstallLeavesTheUsersOwnShellAndSaysHow(t *testing.T) {
 func TestSettingsThatDoNotParseGetTheLineToAdd(t *testing.T) {
 	f := newFakeSetup(t, hostLayout())
 	writeFile(t, f.settingsPath(), "{ // comments are not JSON\n}")
-	if code := f.install(false, false); code != 1 {
+	if code := f.install("", false, false); code != 1 {
 		t.Fatalf("exit %d, want 1", code)
 	}
 	if !strings.Contains(f.errs.String(), `"`+f.claudeShell().Var()+`"`) {
@@ -144,7 +144,7 @@ func TestSettingsThatDoNotParseGetTheLineToAdd(t *testing.T) {
 func TestAFailedSelfTestFailsTheInstall(t *testing.T) {
 	f := newFakeSetup(t, hostLayout())
 	f.selfTest = func(string, string) (int, error) { return 0, nil }
-	if code := f.install(false, false); code != 1 || !strings.Contains(f.errs.String(), "Do not rely on the jail") {
+	if code := f.install("", false, false); code != 1 || !strings.Contains(f.errs.String(), "Do not rely on the jail") {
 		t.Errorf("exit %d:\n%s", code, f.errs.String())
 	}
 }
@@ -152,7 +152,7 @@ func TestAFailedSelfTestFailsTheInstall(t *testing.T) {
 func TestWithTheAgentNothingIsTouched(t *testing.T) {
 	f := newFakeSetup(t, hostLayout())
 	f.agentRuns = func() bool { return true }
-	if code := f.install(false, false); code != 0 || !strings.Contains(f.out.String(), "Golem agent runs the shield") {
+	if code := f.install("", false, false); code != 0 || !strings.Contains(f.out.String(), "Golem agent runs the shield") {
 		t.Fatalf("exit %d:\n%s", code, f.out.String())
 	}
 	if _, err := os.Stat(f.binDir()); err == nil {
@@ -166,7 +166,7 @@ func TestWithTheAgentNothingIsTouched(t *testing.T) {
 func TestNoJailMeansNoInstall(t *testing.T) {
 	f := newFakeSetup(t, "linux")
 	f.canJail = func() bool { return false }
-	if code := f.install(false, false); code != 1 || !strings.Contains(f.errs.String(), "Landlock") {
+	if code := f.install("", false, false); code != 1 || !strings.Contains(f.errs.String(), "Landlock") {
 		t.Errorf("exit %d:\n%s", code, f.errs.String())
 	}
 	if f.settingsEnv(t) != nil {
@@ -177,7 +177,7 @@ func TestNoJailMeansNoInstall(t *testing.T) {
 func TestUninstallPutsClaudeCodeBack(t *testing.T) {
 	f := newFakeSetup(t, hostLayout())
 	writeFile(t, f.settingsPath(), `{"model": "x"}`)
-	f.install(false, false)
+	f.install("", false, false)
 	if code := f.uninstall(true); code != 0 {
 		t.Fatalf("exit %d: %s", code, f.errs.String())
 	}
@@ -194,7 +194,7 @@ func TestUninstallPutsClaudeCodeBack(t *testing.T) {
 
 func TestWindowsInstallsGitBashAndTurnsPowerShellOff(t *testing.T) {
 	f := newFakeSetup(t, "windows")
-	if code := f.install(false, false); code != 0 {
+	if code := f.install("", false, false); code != 0 {
 		t.Fatalf("exit %d: %s", code, f.errs.String())
 	}
 	env := f.settingsEnv(t)
@@ -209,7 +209,7 @@ func TestStatusSaysWhatCommandsGet(t *testing.T) {
 	if !strings.Contains(f.out.String(), "not installed") || !strings.Contains(f.out.String(), "baseline") {
 		t.Errorf("before install:\n%s", f.out.String())
 	}
-	f.install(false, false)
+	f.install("", false, false)
 	if err := shield.WriteConfig(shield.ConfigPath(f.home), shield.Config{Lockdown: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -233,6 +233,7 @@ func TestStatusSaysWhereCommandsWriteAndWhatTheyReach(t *testing.T) {
 		{"darwin", shield.Config{Writes: shield.WritesWorkspace, AllowWrite: []string{"~/go/bin"}, Network: shield.NetworkAllowlist, AllowedHosts: []string{"github.com", "*.npmjs.org"}},
 			[]string{"the project, temp and tool caches, and ~/go/bin", "allowed hosts only, through a proxy: github.com, *.npmjs.org"}},
 		{"linux", shield.Config{Network: shield.NetworkAllowlist}, []string{"none yet", "own network namespace"}},
+		{"darwin", shield.Config{Profile: shield.ProfileAllowlist}, []string{"through a proxy: @model-apis (10 hosts), @package-registries (14 hosts), @git-hosts (5 hosts)"}},
 		{"windows", shield.Config{Writes: shield.WritesWorkspace, Network: shield.NetworkAllowlist}, []string{"the project, temp and tool caches", "golem-exec firewall install"}},
 		{"darwin", shield.Config{Lockdown: true, Network: shield.NetworkAllowlist}, []string{"network      none (lockdown)"}},
 	}
@@ -339,7 +340,7 @@ func TestRefreshUpdatesOnlyAnInstalledShim(t *testing.T) {
 		t.Fatal("refresh installed a shim that was not there")
 	}
 
-	f.install(false, false)
+	f.install("", false, false)
 	writeFile(t, f.settingsPath(), `{"env": {"CLAUDE_CODE_SHELL": "/opt/homebrew/bin/fish"}}`)
 	before, _ := os.ReadFile(f.settingsPath())
 	newer := filepath.Join(t.TempDir(), "golem-exec-newer")

@@ -127,8 +127,38 @@ func TestShellJailCoverageIsCreditWhenJailed(t *testing.T) {
 	items := ShellJailItems([]shield.AgentCoverage{
 		{Client: "claude-code", Coverage: shield.Jailed, Detail: "jailed"},
 		{Client: "cursor", Coverage: shield.NotJailed, Detail: "not jailed"},
-	})
+	}, "")
 	if len(items) != 2 || items[0].Severity != agentposture.Info || items[1].Severity != agentposture.Suspicious || items[0].Area != agentposture.AreaProtections {
 		t.Errorf("%+v", items)
+	}
+}
+
+func TestAnUnjailedAgentIsDangerousWhereTheJailIsRequired(t *testing.T) {
+	items := ShellJailItems([]shield.AgentCoverage{
+		{Client: "claude-code", Coverage: shield.Jailed, Detail: "jailed"},
+		{Client: "cursor", Coverage: shield.NotJailed, Detail: "not jailed"},
+		{Client: "vscode", Coverage: shield.Partial, Detail: "one jail per terminal"},
+	}, "/etc/golem/managed-shield.json")
+	if items[0].Severity != agentposture.Info || items[1].Severity != agentposture.Dangerous || items[2].Severity != agentposture.Dangerous {
+		t.Errorf("%+v", items)
+	}
+	if !strings.Contains(items[1].Detail, "requires the jail (/etc/golem/managed-shield.json)") {
+		t.Errorf("detail %q", items[1].Detail)
+	}
+	if code, _, _ := run(t, options(agentposture.Result{Items: items}), "-fail-on", "dangerous"); code != 3 {
+		t.Errorf("a required jail an agent lacks passed -fail-on dangerous: exit %d", code)
+	}
+}
+
+func TestWhoRequiresTheJailIsNamed(t *testing.T) {
+	home := t.TempDir()
+	if by := JailRequiredBy(home, "linux"); by != "" {
+		t.Errorf("required by %q with nothing set", by)
+	}
+	if err := shield.SetJailRequired(home, true); err != nil {
+		t.Fatal(err)
+	}
+	if by := JailRequiredBy(home, "linux"); by != "the workspace's profile" {
+		t.Errorf("required by %q", by)
 	}
 }

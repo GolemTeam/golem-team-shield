@@ -97,6 +97,9 @@ func TestDevinIsJailedOnlyPastApproval(t *testing.T) {
 			if c == nil || c.Coverage != tc.want || !strings.Contains(c.Detail, tc.detail) {
 				t.Fatalf("got %+v", c)
 			}
+			if c.PastApproval != strings.Contains(c.Detail, "would jail them anyway") {
+				t.Fatalf("only the switch would jail it, but PastApproval is %v: %+v", c.PastApproval, c)
+			}
 		})
 	}
 }

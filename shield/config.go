@@ -16,8 +16,11 @@ import (
 // agent cannot loosen an agent machine. A jailed command can neither read nor
 // write ~/.golem, so the agent being watched cannot change it.
 //
-// A setting left out keeps the baseline's value.
+// A setting left out keeps its profile's value, or with no profile the
+// baseline's.
 type Config struct {
+	// Profile is a named starting point (profiles.go).
+	Profile string `json:"profile,omitempty"`
 	// Enforce false runs commands without a jail.
 	Enforce *bool `json:"enforce"`
 	// Lockdown jails every command as a tainted session: no network, no
@@ -29,7 +32,7 @@ type Config struct {
 	Docker *bool `json:"docker"`
 	// CloudCredentials are the AWS, gcloud, Azure, kubectl, Docker, npm and
 	// PyPI credential files and the cloud CLIs' variables.
-	CloudCredentials *bool `json:"cloud_credentials"`
+	CloudCredentials *bool `json:"cloud_credentials,omitempty"`
 	// EnvAllow keeps secret-shaped variables a command would otherwise lose,
 	// and EnvDeny strips ones it would keep. Each is a name, or a prefix
 	// ending in *. Lockdown ignores EnvAllow.
@@ -37,15 +40,19 @@ type Config struct {
 	EnvDeny  []string `json:"env_deny"`
 	// Writes "workspace" keeps writes to the project, temp, the tool caches
 	// and AllowWrite; "anywhere" leaves them as the baseline has them.
-	Writes     Writes   `json:"writes"`
+	Writes     Writes   `json:"writes,omitempty"`
 	AllowWrite []string `json:"allow_write"`
 	// Network "allowlist" lets commands reach AllowedHosts only, through a
 	// proxy, with everything else refused; "open" leaves the network be.
-	Network      Network  `json:"network"`
-	AllowedHosts []string `json:"allowed_hosts"`
+	Network      Network  `json:"network,omitempty"`
+	AllowedHosts []string `json:"allowed_hosts,omitempty"`
 	// JailPastApproval also jails the agents whose own approval would see
 	// only the jail's rewrite (docs/design-local-shield.md, Other clients).
 	JailPastApproval bool `json:"jail_past_approval"`
+	// RequireJail says every agent here must be jailed: a command the jail
+	// can't hold is refused, enforce false is overruled, and an agent whose
+	// commands run outside the jail is dangerous.
+	RequireJail bool `json:"require_jail"`
 }
 
 const maxConfigBytes = 64 << 10
@@ -55,24 +62,18 @@ var envPatternRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*\*?$`)
 // ConfigPath is where a machine's shield settings live.
 func ConfigPath(home string) string { return filepath.Join(home, ".golem", "shield.json") }
 
-// DefaultConfig is what a new install writes, in full so every setting is
-// there to edit: the baseline, with writes kept to the project as in Claude
-// Code's sandbox. A file from before writes existed has none, and keeps
-// writing anywhere.
-func DefaultConfig() Config {
+// NewConfig is what a new install writes: the profile, and every setting the
+// profile leaves alone so each is there to edit. The profile's own settings
+// are left out, or they would outrank it. A file from before profiles has
+// none, and keeps what it names.
+func NewConfig(profile string) Config {
 	on := true
-	return Config{Enforce: &on, SSHAgent: &on, Docker: &on, CloudCredentials: &on, EnvAllow: []string{}, EnvDeny: []string{},
-		Writes: WritesWorkspace, AllowWrite: []string{}, Network: NetworkOpen, AllowedHosts: []string{}}
+	return Config{Profile: profile, Enforce: &on, SSHAgent: &on, Docker: &on, EnvAllow: []string{}, EnvDeny: []string{}, AllowWrite: []string{}}
 }
 
-// StrictConfig is the default without the cloud credentials, for a machine
-// whose agents should not reach a cloud account from a shell.
-func StrictConfig() Config {
-	c := DefaultConfig()
-	off := false
-	c.CloudCredentials = &off
-	return c
-}
+// DefaultConfig is a new install's: the standard profile, writes kept to the
+// project as in Claude Code's sandbox.
+func DefaultConfig() Config { return NewConfig(ProfileStandard) }
 
 // LoadConfig reads path. A missing file is not an error: found is false. A
 // file that does not parse, or names a setting this version does not know, is
@@ -97,6 +98,9 @@ func LoadConfig(path string) (c Config, found bool, err error) {
 		if !envPatternRE.MatchString(p) {
 			return Config{}, true, fmt.Errorf("%q is not a variable name or a prefix ending in *", p)
 		}
+	}
+	if err := CheckProfile(c.Profile); err != nil {
+		return Config{}, true, err
 	}
 	if err := c.checkConfinement(); err != nil {
 		return Config{}, true, err
@@ -123,6 +127,7 @@ func Unreadable() Policy { return Config{Lockdown: true}.Policy() }
 
 // Policy is the shield policy the settings ask for.
 func (c Config) Policy() Policy {
+	c = c.Resolved()
 	p := Baseline()
 	p.Enforce = orTrue(c.Enforce)
 	if c.Lockdown {
@@ -133,6 +138,8 @@ func (c Config) Policy() Policy {
 	p.Writes, p.AllowWrite = c.Writes, c.AllowWrite
 	p.Network, p.AllowedHosts = c.Network, c.AllowedHosts
 	p.JailPastApproval = c.JailPastApproval
+	p.RequireJail = c.RequireJail
+	p.Enforce = p.Enforce || c.RequireJail
 	return p
 }
 

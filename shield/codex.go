@@ -197,6 +197,7 @@ func codexCoverage(env CoverageEnv) (AgentCoverage, bool) {
 	shim, past := hookShimFor(env, HookShim(env.Home, env.LoginShell))
 	if shim == "" {
 		c.Detail = "On Windows Golem doesn't rewrite Codex's PowerShell commands: Codex's own dangerous-command checks would no longer see them" + pastApprovalHint
+		c.PastApproval = true
 		return c, true
 	}
 	group := -1

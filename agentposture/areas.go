@@ -70,7 +70,8 @@ type Result struct {
 	Agents []string
 	Read   []string
 	// Repo names the repository a ScanRepo read; "" for a machine.
-	Repo string
+	Repo  string
+	Tools ToolCoverage
 }
 
 // MaxReportItems caps ScanAll, which reports more than the settings Scan does.
@@ -111,6 +112,11 @@ func ScanAll(env Env) Result {
 	res.Items = append(res.Items, s.permissionItems()...)
 	res.Items = append(res.Items, s.secretItems()...)
 	res.Items = append(res.Items, s.sourceItems()...)
+	tools, cov := s.toolDescriptionItems(cs.Servers)
+	res.Items = append(res.Items, tools...)
+	if env.Repo == "" {
+		res.Tools = cov
+	}
 	if len(res.Agents) > 0 {
 		s.read[AreaSecrets] = true
 	}

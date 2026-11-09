@@ -55,6 +55,11 @@ type shim struct {
 	// noNamespace skips the Linux network namespace, for tests of the
 	// fallback.
 	noNamespace bool
+	managed     func() shield.Managed
+}
+
+func loadManaged() shield.Managed {
+	return shield.LoadManaged(shield.ManagedConfigPath(runtime.GOOS), shield.AdminOwned)
 }
 
 func newShim(witness string) *shim {
@@ -72,6 +77,7 @@ func newShim(witness string) *shim {
 		stderr:   os.Stderr,
 		canJail:  canJail,
 		now:      time.Now,
+		managed:  loadManaged,
 	}
 }
 
@@ -117,6 +123,10 @@ func (s *shim) run(shell string, args []string) int {
 	argv := append([]string{shell}, args...)
 	start := s.now()
 	if !s.jailed(&rec, policy, tmp, argv, env) {
+		if policy.RequireJail && !s.canJail() {
+			fmt.Fprintln(s.stderr, "golem-exec: this machine requires the Golem shield, and it can't be built here; not running the command")
+			return 126
+		}
 		fmt.Fprintln(s.stderr, "golem-exec: can't build the Golem shield for this command; not running it")
 		return 126
 	}
@@ -305,17 +315,25 @@ func (s *shim) policy(req shield.PolicyRequest) (shield.Policy, bool) {
 	return live, true
 }
 
-// configPolicy is what ~/.golem/shield.json asks for, or the baseline with no
-// file. A file that cannot be followed gets lockdown, and says so on every
-// command until it is fixed.
+// configPolicy is what ~/.golem/shield.json asks for under the managed
+// settings, or the baseline with neither. A file that cannot be followed gets
+// lockdown, and says so on every command until it is fixed.
 func (s *shim) configPolicy() shield.Policy {
 	s.standalone = true
-	c, found, err := shield.LoadConfig(shield.ConfigPath(s.home))
+	var m shield.Managed
+	if s.managed != nil {
+		m = s.managed()
+	}
+	c, found, err := shield.MachineConfig(s.home, m)
 	if !found {
 		return shield.Baseline()
 	}
 	if err != nil {
-		fmt.Fprintf(s.stderr, "golem-exec: ~/.golem/shield.json is not valid (%v); every command is locked down until it is fixed\n", err)
+		where := "~/.golem/shield.json"
+		if m.Err != nil {
+			where = m.Path
+		}
+		fmt.Fprintf(s.stderr, "golem-exec: %s is not valid (%v); every command is locked down until it is fixed\n", where, err)
 		return shield.Unreadable()
 	}
 	return c.Policy()

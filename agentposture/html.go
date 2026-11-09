@@ -38,13 +38,16 @@ type htmlPage struct {
 	Dangerous   int
 	Suspicious  int
 	NotRead     string
+	ToolsRead   []htmlProtection
+	ToolsUnread []htmlProtection
 }
 
 // WriteHTML writes a scan as one self-contained page: inline styles, no
 // script, nothing fetched, so it opens the same from an email or a ticket.
 func WriteHTML(w io.Writer, res Result, meta HTMLMeta) error {
 	rep := Score(res)
-	page := htmlPage{Meta: meta, Report: rep, Repo: res.Repo, NotRead: NotRead}
+	page := htmlPage{Meta: meta, Report: rep, Repo: res.Repo, NotRead: NotRead,
+		ToolsRead: serverLines(res.Tools.Read), ToolsUnread: serverLines(res.Tools.Unread)}
 	byArea := map[string]*htmlArea{}
 	for _, a := range rep.Areas {
 		if a.Area == AreaProtections {
@@ -181,8 +184,12 @@ footer{margin-top:32px;color:var(--muted);font-size:13px}
 {{end}}</details>{{end}}
 </div>
 {{end}}{{end}}
-{{if not .Repo}}<h2>Not checked</h2>
-<div class="note">{{.NotRead}}</div>{{end}}
+{{if not .Repo}}<h2>MCP tool descriptions</h2>
+{{if .ToolsRead}}<p class="muted">Read from the copy an agent stored:</p>
+<ul class="prot">{{range .ToolsRead}}<li><strong>{{.Client}}</strong> <span class="muted">{{.Line}}</span></li>{{end}}</ul>
+{{end}}{{if .ToolsUnread}}<p class="muted">Not read, as no agent stored a copy:</p>
+<ul class="prot">{{range .ToolsUnread}}<li><strong>{{.Client}}</strong> <span class="muted">{{.Line}}</span></li>{{end}}</ul>
+{{end}}<p></p><div class="note">{{.NotRead}}</div>{{end}}
 <footer>Made by golem-check, open source at github.com/GolemTeam/golem-team-shield. Paths under the home directory are shown as ~; the host and user names are not in this report, and neither is any file's text.</footer>
 </main></body>
 </html>
