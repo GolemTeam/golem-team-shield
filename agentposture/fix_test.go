@@ -51,6 +51,7 @@ func riskyHome(t *testing.T) (Env, string) {
 	guard := filepath.Join(shared, "guard.sh")
 	writePostureFile(t, guard, "#!/bin/sh\nexit 0\n")
 	chmod(t, guard, 0o666)
+	hookCommand := `"bash ` + strings.ReplaceAll(guard, `\`, `\\`) + ` && echo ok"`
 	settings := filepath.Join(env.Home, ".claude", "settings.json")
 	writePostureFile(t, settings, `{
   "env": {"GITHUB_TOKEN": "`+fakeToken+`"},
@@ -60,7 +61,7 @@ func riskyHome(t *testing.T) (Env, string) {
   },
   "skipDangerousModePermissionPrompt": true,
   "enableAllProjectMcpServers": true,
-  "hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": "bash `+guard+` && echo ok"}]}]},
+  "hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": `+hookCommand+`}]}]},
   "cleanupPeriodDays": 1786000000000
 }
 `)
