@@ -261,3 +261,14 @@ func TestFormatLikeKeepsTheLayout(t *testing.T) {
 		}
 	}
 }
+
+func TestAHomeLocationResolvesWithEitherSeparator(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "h")
+	want := filepath.Join(home, ".claude", "settings.json")
+	native := "~" + string(filepath.Separator) + filepath.Join(".claude", "settings.json")
+	for _, loc := range []string{"~/.claude/settings.json", native} {
+		if got := realPath(home, loc); got != want {
+			t.Errorf("realPath(%q) = %q, want %q", loc, got, want)
+		}
+	}
+}

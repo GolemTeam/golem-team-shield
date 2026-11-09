@@ -181,7 +181,7 @@ func refused(home string, it Item) string {
 }
 
 func realPath(home, location string) string {
-	if location == "~" || strings.HasPrefix(location, "~/") {
+	if location == "~" || strings.HasPrefix(location, "~/") || strings.HasPrefix(location, `~\`) {
 		return filepath.Join(home, filepath.FromSlash(strings.TrimPrefix(location, "~")))
 	}
 	return filepath.FromSlash(location)
