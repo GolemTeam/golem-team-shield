@@ -32,8 +32,8 @@ func environOf(pid int, env ...string) func(int) ([]string, bool) {
 
 func TestReadGrokBotDaemon(t *testing.T) {
 	home := grokBotHome(t, `{"pid":4242,"startedAt":1,"servingAt":2,"inflightCount":2}`)
-	d, ok := ReadGrokBotDaemon(home, environOf(4242, "SHELL=/bin/zsh", "SAND_LOCAL_EXEC_GENERATION=7"))
-	if !ok || d.PID != 4242 || d.Inflight != 2 || d.Shell != "/bin/zsh" {
+	d, ok := ReadGrokBotDaemon(home, environOf(4242, "SHELL=/bin/zsh", "SAND_LOCAL_EXEC_GENERATION=7", "SAND_LOCAL_EXEC_ROOT=/Users/x/GrokBot"))
+	if !ok || d.PID != 4242 || d.Inflight != 2 || d.Shell != "/bin/zsh" || d.Root != "/Users/x/GrokBot" {
 		t.Fatalf("got %+v ok=%v", d, ok)
 	}
 	if _, ok := ReadGrokBotDaemon(home, environOf(4242, "SHELL=/bin/zsh")); ok {
@@ -67,7 +67,9 @@ func TestGrokBotCoverage(t *testing.T) {
 		want         Coverage
 		via, detail  string
 	}{
-		{"wrapped", daemon, nil, Jailed, AttachLaunch, "run in the Golem jail (its daemon's shell is ~/.golem/bin/golem-zsh)"},
+		{"wrapped", daemon, nil, Jailed, AttachLaunch, "run in the Golem jail (its daemon's shell is " + filepath.Join("~", ".golem", "bin", "golem-zsh") +
+			"), and its file tools reach only " + filepath.Join("~", "GrokBot")},
+		{"wrapped without the file root", daemon, nil, Jailed, AttachLaunch, "but its file tools reach every file you can"},
 		{"plain shell", daemon, environOf(4242, "SHELL=/bin/zsh", "SAND_LOCAL_EXEC_GENERATION=1"), NotJailed, "", "its daemon's shell is /bin/zsh"},
 		{"not running", "", environOf(4242), NotJailed, "", "isn't running"},
 		{"unread", daemon, nil, NotJailed, "", "`golem doctor` reads it"},
@@ -75,8 +77,12 @@ func TestGrokBotCoverage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			home := grokBotHome(t, tc.daemon)
 			env := CoverageEnv{Home: home, GOOS: "darwin", ShimReady: ready, ProcessEnviron: tc.environ}
-			if tc.name == "wrapped" {
-				env.ProcessEnviron = environOf(4242, "SHELL="+filepath.Join(ShimDir(home), "golem-zsh"), "SAND_LOCAL_EXEC_GENERATION=1")
+			shim := "SHELL=" + filepath.Join(ShimDir(home), "golem-zsh")
+			switch tc.name {
+			case "wrapped":
+				env.ProcessEnviron = environOf(4242, shim, "SAND_LOCAL_EXEC_GENERATION=1", "SAND_LOCAL_EXEC_ROOT="+GrokBotFileRoot(home))
+			case "wrapped without the file root":
+				env.ProcessEnviron = environOf(4242, shim, "SAND_LOCAL_EXEC_GENERATION=1")
 			}
 			c := line(t, env)
 			if c.Coverage != tc.want || c.Via != tc.via || !strings.Contains(c.Detail, tc.detail) {

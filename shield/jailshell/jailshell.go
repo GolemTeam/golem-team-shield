@@ -21,7 +21,7 @@ func IsShim(home, goos, path string) bool {
 		slash := func(p string) string { return strings.ReplaceAll(filepath.Clean(p), `\`, "/") }
 		return strings.EqualFold(slash(path), slash(filepath.Join(dir, "bash.exe")))
 	}
-	return strings.HasPrefix(path, dir+string(filepath.Separator)+"golem-")
+	return strings.HasPrefix(filepath.ToSlash(path), filepath.ToSlash(dir)+"/golem-")
 }
 
 type GrokBotDaemon struct {
@@ -29,7 +29,13 @@ type GrokBotDaemon struct {
 	// Inflight is the daemon's inflightCount, or -1 when its file doesn't say.
 	Inflight int
 	Shell    string
+	// Root is SAND_LOCAL_EXEC_ROOT: the folder the daemon's read, ls and file
+	// download tools are held to. Empty means the member's home folder.
+	Root string
 }
+
+// GrokBotFileRoot is the folder the Golem agent holds Grok Bot's file tools to.
+func GrokBotFileRoot(home string) string { return filepath.Join(home, "GrokBot") }
 
 // The app sets this on the daemon and the daemon never clears it, so a pid
 // the daemon file names but another program now holds is told apart.
@@ -74,6 +80,8 @@ func ReadGrokBotDaemon(home string, environ func(pid int) ([]string, bool)) (d G
 		switch k {
 		case "SHELL":
 			d.Shell = v
+		case "SAND_LOCAL_EXEC_ROOT":
+			d.Root = v
 		case grokBotDaemonMarker:
 			ok = true
 		}

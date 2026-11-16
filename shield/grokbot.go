@@ -12,6 +12,8 @@ type GrokBotDaemon = jailshell.GrokBotDaemon
 
 func GrokBotDaemonFile(home string) string { return jailshell.GrokBotDaemonFile(home) }
 
+func GrokBotFileRoot(home string) string { return jailshell.GrokBotFileRoot(home) }
+
 func ReadGrokBotDaemon(home string, environ func(pid int) ([]string, bool)) (GrokBotDaemon, bool) {
 	return jailshell.ReadGrokBotDaemon(home, environ)
 }
@@ -35,9 +37,13 @@ func grokBotCoverage(env CoverageEnv) (AgentCoverage, bool) {
 		c.Detail = "Grok Bot's commands on this machine run without the Golem jail: its daemon's shell is " + shell
 	case !env.ShimReady(d.Shell):
 		c.Detail = "Grok Bot's daemon runs on the Golem jail's shell, but " + tilde(env.Home, d.Shell) + " is not installed"
+	case d.Root != GrokBotFileRoot(env.Home):
+		c.Coverage, c.Via = Jailed, AttachLaunch
+		c.Detail = "Grok Bot's commands on this machine run in the Golem jail, but its file tools reach every file you can, outside it"
 	default:
 		c.Coverage, c.Via = Jailed, AttachLaunch
-		c.Detail = "Grok Bot's commands on this machine run in the Golem jail (its daemon's shell is " + tilde(env.Home, d.Shell) + ")"
+		c.Detail = "Grok Bot's commands on this machine run in the Golem jail (its daemon's shell is " + tilde(env.Home, d.Shell) +
+			"), and its file tools reach only " + tilde(env.Home, d.Root)
 	}
 	return c, true
 }
