@@ -47,8 +47,8 @@ var (
 )
 
 // ParseCodexMCPServers reads the [mcp_servers.<name>] tables of a Codex
-// config.toml: command, args, url, and the string values of its
-// [mcp_servers.<name>.env] subtable. It is not a TOML parser, and needs none of
+// config.toml: command, args, url, and the string values of its env and
+// http_headers, as a [mcp_servers.<name>.env] subtable or an inline table. It is not a TOML parser, and needs none of
 // the rest of the file.
 func ParseCodexMCPServers(s string) map[string]MCPServer {
 	out := map[string]MCPServer{}
@@ -97,6 +97,10 @@ func ParseCodexMCPServers(s string) map[string]MCPServer {
 			d.Command, _ = tomlString(value)
 		case "url":
 			d.URL, _ = tomlString(value)
+		case "env":
+			d.Env = mergeStrings(d.Env, tomlInlineTable(value))
+		case "http_headers":
+			d.Headers = mergeStrings(d.Headers, tomlInlineTable(value))
 		case "args":
 			for strings.Count(value, "[") > strings.Count(value, "]") && i+1 < len(lines) {
 				i++
@@ -146,4 +150,63 @@ func tomlStrings(v string) []string {
 		inner = inner[end+1:]
 	}
 	return out
+}
+
+// tomlInlineTable is the string values of a one-line inline table,
+// { KEY = "v", "other.key" = 'w' }; a value of another type is skipped.
+func tomlInlineTable(v string) map[string]string {
+	v = strings.TrimSpace(v)
+	if !strings.HasPrefix(v, "{") || !strings.HasSuffix(v, "}") {
+		return nil
+	}
+	out := map[string]string{}
+	inner := v[1 : len(v)-1]
+	for {
+		inner = strings.TrimLeft(inner, " \t,")
+		eq := strings.IndexByte(inner, '=')
+		if eq < 0 {
+			return out
+		}
+		key := strings.Trim(strings.TrimSpace(inner[:eq]), `"'`)
+		inner = strings.TrimLeft(inner[eq+1:], " \t")
+		if inner == "" {
+			return out
+		}
+		quote := inner[0]
+		if quote != '"' && quote != '\'' {
+			comma := strings.IndexByte(inner, ',')
+			if comma < 0 {
+				return out
+			}
+			inner = inner[comma+1:]
+			continue
+		}
+		end := 1
+		for end < len(inner) && inner[end] != quote {
+			if quote == '"' && inner[end] == '\\' {
+				end++
+			}
+			end++
+		}
+		if end >= len(inner) {
+			return out
+		}
+		if s, ok := tomlString(inner[:end+1]); ok {
+			out[key] = s
+		}
+		inner = inner[end+1:]
+	}
+}
+
+func mergeStrings(into, from map[string]string) map[string]string {
+	if len(from) == 0 {
+		return into
+	}
+	if into == nil {
+		into = map[string]string{}
+	}
+	for k, v := range from {
+		into[k] = v
+	}
+	return into
 }

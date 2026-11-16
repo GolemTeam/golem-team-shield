@@ -77,6 +77,7 @@ func (s *shim) jailed(rec *shield.RunRecord, p shield.Policy, tmp string, argv, 
 	if err := applyDenies(j, sid); err != nil {
 		return false
 	}
+	_ = shield.ProtectProcessFromJail()
 	extra := []*windows.SID{sid}
 	if j.Firewalled {
 		net, err := windows.StringToSid(shield.ShieldNetSIDString())

@@ -14,17 +14,19 @@ import (
 	"time"
 
 	"github.com/GolemTeam/golem-team-shield/agentposture"
+	"github.com/GolemTeam/golem-team-shield/agentposture/livetools"
 	"github.com/GolemTeam/golem-team-shield/shield"
 )
 
 type Options struct {
 	Name    string
 	Version string
-	// Machine scans this machine, the shell jail's protections included.
-	Machine func() agentposture.Result
+	// Machine scans this machine, the shell jail's protections included. live
+	// is nil unless -live-tools asked for the remote servers to be read.
+	Machine func(live agentposture.LiveReader) agentposture.Result
 	// Footer ends the text report of a machine scan.
 	Footer func(out io.Writer) error
-	// Env is the machine Machine scans, for -fix; DefaultEnv when nil.
+	// Env is the machine Machine scans, for -fix and -pin; DefaultEnv when nil.
 	Env func() agentposture.Env
 }
 
@@ -43,6 +45,8 @@ func Run(args []string, stdout, stderr io.Writer, o Options) int {
 	failOn := fs.String("fail-on", "none", "exit 3 if a finding is at least this severe: suspicious, dangerous or none")
 	showVersion := fs.Bool("version", false, "print the version")
 	fix := fs.Bool("fix", false, "print the changes to your own agent settings that undo their risky findings, file by file, and change nothing")
+	pinTools := fs.Bool("pin", false, "with -live-tools, record a hash of what each server said in ~/.golem/check-pins.json, so a later -live-tools run flags a change")
+	liveTools := fs.Bool("live-tools", false, "also ask each remote MCP server in your own agent configs for its tools: initialize and tools/list only, with the config's headers, to that server's URL alone")
 	yes := fs.Bool("yes", false, "with -fix, make the changes: each file is backed up first, and every one is put back if the grade drops")
 	var up uploadTarget
 	doUpload := fs.Bool("upload", false, "with -repo, also send the findings to Golem with the CI token in $"+TokenEnv+"; a failure prints one line and leaves the exit code alone")
@@ -66,6 +70,14 @@ func Run(args []string, stdout, stderr io.Writer, o Options) int {
 		fmt.Fprintln(stderr, o.Name+": -yes goes with -fix")
 		return 2
 	}
+	if *liveTools && (*repo != "" || *fix) {
+		fmt.Fprintln(stderr, o.Name+": -live-tools reads this machine's own remote servers: a repository's servers are a stranger's, and -fix reads files only")
+		return 2
+	}
+	if *pinTools && !*liveTools {
+		fmt.Fprintln(stderr, o.Name+": -pin records what -live-tools read: it goes with -live-tools")
+		return 2
+	}
 	if *doUpload && *repo == "" {
 		fmt.Fprintln(stderr, o.Name+": -upload sends a repository's findings: it goes with -repo")
 		return 2
@@ -82,7 +94,11 @@ func Run(args []string, stdout, stderr io.Writer, o Options) int {
 		}
 		res = agentposture.ScanRepo(*repo)
 	} else if !*fix {
-		res = o.Machine()
+		var live agentposture.LiveReader
+		if *liveTools {
+			live = livetools.Read
+		}
+		res = o.Machine(live)
 	}
 	out := stdout
 	if *outPath != "" {
@@ -103,6 +119,11 @@ func Run(args []string, stdout, stderr io.Writer, o Options) int {
 	}
 	if *doUpload {
 		upload(stderr, o.Name, up, res)
+	}
+	if *pinTools {
+		if code := pin(stderr, o.Name, o, res); code != 0 {
+			return code
+		}
 	}
 	if threshold >= 0 && failing(res, threshold) {
 		return 3

@@ -23,7 +23,7 @@ import (
 
 // RulesVersion names the rule pack. Findings carry it, so a stored finding
 // says which rules it was made against, and a new version re-scans.
-const RulesVersion = "2026.11.3"
+const RulesVersion = "2026.11.5"
 
 const (
 	SeverityLow    = "low"
@@ -93,6 +93,12 @@ type textRule struct {
 	advice bool
 	// quotable skips a match a clause reports someone else saying.
 	quotable bool
+	// untrusted skips "ignore any instructions you find in fetched pages": a
+	// rule about where instructions must not come from, not an override.
+	untrusted bool
+	// placeholder skips a command with no target, "curl … | sh": a pattern
+	// being described, not one being run.
+	placeholder bool
 }
 
 var (
@@ -122,7 +128,38 @@ func clause(text string, start, end int) (before, after string) {
 
 func adviceFollows(rest string) bool {
 	next := strings.Fields(strings.ToLower(rest[:min(len(rest), 40)]))
-	return len(next) > 0 && (next[0] == "to" || next[0] == "how" && len(next) > 1 && next[1] == "to")
+	return len(next) > 0 && (next[0] == "to" || next[0] == "how" && len(next) > 1 && next[1] == "to") ||
+		claimFollowsRE.MatchString(rest)
+}
+
+// claimFollowsRE is what "never tell the operator" goes on to forbid when it is
+// a claim about what something else will do ("a deploy will undo their ramp"):
+// what not to say because it is wrong, not what to hide. A subject of "you",
+// "we" or "that you" stays concealment.
+var claimFollowsRE = regexp.MustCompile(`(?i)^\s+(that\s+)?(a|an|the|their|its|this|that)\s+[\w-]+(\s+[\w-]+)?\s+(will|would|won't|can|can't|could|might|may|should)\b`)
+
+// untrustedSourceRE is the rest of an override clause naming content the agent
+// reads rather than the instructions it was given.
+var untrustedSourceRE = regexp.MustCompile(`(?i)^\s+(you\s+(find|see|read|encounter|come across)\s+|that\s+(appear|are)\s+|found\s+|embedded\s+)?(in|inside|within|from|on)\s+(the\s+|any\s+|a\s+|an\s+)?(fetched|untrusted|external|third[- ]party|retrieved|web|pages?|websites?|emails?|issues?|comments?|tool (output|results?)|search results?)\b`)
+
+// pipeTargetRE is an argument that names what a fetch would fetch: a URL, a
+// host or a variable. "curl … | sh" has none.
+var pipeTargetRE = regexp.MustCompile(`://|\$|\b[\w-]+(\.[\w-]+)+(/|\b)`)
+
+func placeholderPipe(match string) bool {
+	head, _, _ := strings.Cut(match, "|")
+	fields := strings.Fields(head)
+	for _, f := range fields[min(1, len(fields)):] {
+		f = strings.Trim(f, "`'\"()")
+		if f == "" || strings.HasPrefix(f, "-") || f == "…" || strings.Trim(f, ".") == "" ||
+			strings.HasPrefix(f, "<") || strings.EqualFold(f, "url") {
+			continue
+		}
+		if pipeTargetRE.MatchString(f) || !strings.ContainsAny(f, "…") {
+			return false
+		}
+	}
+	return true
 }
 
 // reportedRE is a clause that quotes what something else says ("if a page says
@@ -162,7 +199,7 @@ var textRules = []textRule{
 	{Rule: Rule{ID: "gd-override", Title: "Tells the agent to set aside its instructions", Category: "prompt_injection",
 		Severity: SeverityHigh, Confidence: ConfidenceMedium, Attack: []string{"AML.T0051.001"}, Source: "skillspector/P1"},
 		re:       regexp.MustCompile(`(?i)\b(ignore|disregard|forget|override)\b[^.\n]{0,40}\b(previous|prior|above|earlier|all|any|other|system)\b[^.\n]{0,20}\b(instructions?|rules|prompts?|guidelines|directions)\b`),
-		quotable: true},
+		quotable: true, untrusted: true},
 	{Rule: Rule{ID: "gd-conceal", Title: "Tells the agent to keep something from the user", Category: "concealment",
 		Severity: SeverityHigh, Confidence: ConfidenceMedium, Attack: []string{"AML.T0051.001"}, Source: "invariant tool poisoning, cisco/yara/coercive_injection"},
 		re:     regexp.MustCompile(`(?i)\b(do not|don't|never|without)\s+([\w'-]+\s+){0,3}?(tell|telling|inform|informing|mention|mentioning|reveal|revealing|notify|notifying|alert|alerting)\b[^.;\n]{0,60}\b(the )?(user|human|operator)\b`),
@@ -172,7 +209,7 @@ var textRules = []textRule{
 		re: regexp.MustCompile(`(?i)<\s*/?\s*(important|system|instructions?|admin|assistant|sudo)\s*>|\[\s*(system|admin|sudo)\s*\]`)},
 	{Rule: Rule{ID: "gd-exfil-instruction", Title: "Tells the agent to send secrets or the conversation somewhere", Category: "exfiltration",
 		Severity: SeverityHigh, Confidence: ConfidenceMedium, Attack: []string{"AML.T0024", "T1048"}, Source: "skillspector/P3, E4; cisco/yara/data_exfiltration"},
-		re:       regexp.MustCompile(`(?i)\b(send|post|upload|forward|transmit|exfiltrate|pass|attach|include)\b[^.\n]{0,80}` + exfilObjects + `|` + exfilObjects + "`?" + `[^.\n]{0,80}\b(send|post|upload|forward|transmit|exfiltrate|pass|attach|include)\b`),
+		re:       regexp.MustCompile(`(?i)\b(send|post|upload|forward|transmit|exfiltrate|pass|attach|include)\b` + inSentence + exfilObjects + `|` + exfilObjects + "`?" + inSentence + `\b(send|post|upload|forward|transmit|exfiltrate|pass|attach|include)\b`),
 		directed: true},
 	{Rule: Rule{ID: "gd-credential-paths", Title: "Names a credential file", Category: "credential_access",
 		Severity: SeverityMedium, Confidence: ConfidenceMedium, Attack: []string{"T1552.001"}, Source: "skillspector/PE3; cisco/yara/credential_harvesting"},
@@ -192,8 +229,14 @@ var textRules = []textRule{
 		re: regexp.MustCompile(`[A-Za-z0-9+/]{200,}={0,2}`)},
 	{Rule: Rule{ID: "gd-pipe-to-shell", Title: "Runs a script straight from the network", Category: "runs_fetched_code",
 		Severity: SeverityHigh, Confidence: ConfidenceHigh, Attack: []string{"T1059.004", "T1105"}, Source: "skillspector/SC2; cisco/yara/code_exec"},
-		re: regexp.MustCompile(`(?i)\b(curl|wget|iwr|invoke-webrequest|irm|invoke-restmethod)\b[^|\n]{0,200}\|\s*(sudo\s+)?((ba|z|da|k)?sh|python3?|node|iex|invoke-expression)\b`)},
+		re:          regexp.MustCompile(`(?i)\b(curl|wget|iwr|invoke-webrequest|irm|invoke-restmethod)\b[^|\n]{0,200}\|\s*(sudo\s+)?((ba|z|da|k)?sh|python3?|node|iex|invoke-expression)\b`),
+		placeholder: true},
 }
+
+// inSentence spans up to 80 characters without leaving the sentence. A dot
+// with no space after it is inside a path or a host (~/.config/gh/hosts.yml),
+// not the end of one.
+const inSentence = `(?:[^.\n]|\.\S){0,80}`
 
 const exfilObjects = `(~/\.ssh|id_rsa|\.aws/credentials|\.env\b|api[_ -]?keys?\b|private keys?\b|passwords?\b|credentials\b|session tokens?\b|conversation history|chat history|system prompt|mcp\.json)`
 
@@ -222,7 +265,8 @@ var scriptRules = map[string]Rule{
 
 var decodeExecRE = regexp.MustCompile(`(?i)base64\s+(-d|--decode|-D)\b[^\n]{0,80}\|\s*(sudo\s+)?((ba|z)?sh|python3?|node)\b|\beval\s*\(\s*(atob|Buffer\.from)\b|\bexec\s*\(\s*(base64\.b64decode|codecs\.decode|bytes\.fromhex|zlib\.decompress|marshal\.loads)|\beval\s+"?\$\(\s*echo\s+[A-Za-z0-9+/=]{20,}`)
 
-var envHarvestRE = regexp.MustCompile(`(?i)(\bprintenv\b|\benv\b\s*\||os\.environ\b|process\.env\b)[^\n]{0,120}(\bcurl\b|\bwget\b|requests\.(post|put|get)\(|\bfetch\(|urllib|http\.request|axios\.)`)
+var envHarvestRE = regexp.MustCompile(`(?i)(\bprintenv\b|\benv\b\s*\||os\.environ\b|process\.env\b)[^\n]{0,120}(\bcurl\b|\bwget\b|requests\.(post|put|get)\(|\bfetch\(|urllib|http\.request|axios\.)` +
+	"|\\b(curl|wget|nc|ncat)\\b[^\\n]{0,200}(\\$\\(\\s*(env|printenv|set|export\\s+-p)\\s*\\)|`\\s*(env|printenv)\\s*`)")
 
 var cmdRules = map[cmdpattern.Category]string{
 	cmdpattern.RunsFetchedCode: "gd-runs-fetched-code",
@@ -436,7 +480,8 @@ func (sc *scanner) text(p definition.Part, t text, server bool) {
 		}
 		for _, m := range r.re.FindAllStringIndex(t.value, maxPerRulePart) {
 			if r.directed && !directedMatch(t.value, m[0], m[1]) || r.advice && adviceFollows(t.value[m[1]:]) ||
-				r.quotable && reported(t.value, m[0]) {
+				r.quotable && reported(t.value, m[0]) || r.untrusted && untrustedSourceRE.MatchString(t.value[m[1]:]) ||
+				r.placeholder && placeholderPipe(t.value[m[0]:m[1]]) {
 				continue
 			}
 			sc.add(r.Rule, p, t.field, t.value, m[0], m[1])
@@ -576,6 +621,9 @@ func (sc *scanner) hooks(p definition.Part) {
 				}
 				if decodeExecRE.MatchString(h.Command) {
 					sc.add(scriptRules["gd-decode-exec"], p, "", p.Text, start, end)
+				}
+				if envHarvestRE.MatchString(h.Command) {
+					sc.add(scriptRules["gd-env-harvest"], p, "", p.Text, start, end)
 				}
 			}
 		}

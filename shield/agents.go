@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/GolemTeam/golem-team-shield/shield/jailshell"
 )
 
 // Agents other than Claude Code don't let the shell be named, so their
@@ -17,7 +19,11 @@ import (
 // ShimDir is where the shim lives under the shell names an agent is pointed
 // at. The jail keeps it unwritable, so no command can replace the shell the
 // next one runs in.
-func ShimDir(home string) string { return filepath.Join(home, ".golem", "bin") }
+func ShimDir(home string) string { return jailshell.ShimDir(home) }
+
+// ShimShells are the shim's names as an agent's own shell: Claude Code and
+// Grok Bot take a shell only when its path contains "zsh" or "bash".
+var ShimShells = []string{"golem-zsh", "golem-bash"}
 
 // HookShimDir is where the shim answers to a plain shell name (bash, zsh) for
 // a hook's rewrite. The name matters: the clients approve the rewritten

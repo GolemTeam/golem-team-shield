@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/GolemTeam/golem-team-shield/internal/jsonobject"
+	"github.com/GolemTeam/golem-team-shield/shield/jailshell"
 )
 
 // Coverage says, per agent installed here, whether its shell commands run in
@@ -54,17 +55,13 @@ type CoverageEnv struct {
 	CodexHomes []string
 	// OpenClawDir is OpenClaw's $OPENCLAW_STATE_DIR; "" means ~/.openclaw.
 	OpenClawDir string
+	// ProcessEnviron reads a same-user process's environment; nil leaves
+	// Grok Bot's daemon unread.
+	ProcessEnviron func(pid int) ([]string, bool)
 }
 
 // IsShim reports whether path is one of the shim's names under home.
-func IsShim(home, goos, path string) bool {
-	dir := ShimDir(home)
-	if goos == "windows" {
-		slash := func(p string) string { return strings.ReplaceAll(filepath.Clean(p), `\`, "/") }
-		return strings.EqualFold(slash(path), slash(filepath.Join(dir, "bash.exe")))
-	}
-	return strings.HasPrefix(path, dir+string(filepath.Separator)+"golem-")
-}
+func IsShim(home, goos, path string) bool { return jailshell.IsShim(home, goos, path) }
 
 // ReadyShim is the default ShimReady: a regular file, executable off Windows.
 // A shim the check may not even look at is taken as there: the jail denies
@@ -114,7 +111,7 @@ func CoverageOf(env CoverageEnv) []AgentCoverage {
 		env.ShimReady = ReadyShim(env.GOOS)
 	}
 	var out []AgentCoverage
-	reads := []func(CoverageEnv) (AgentCoverage, bool){claudeCoverage, codexCoverage, geminiCoverage, cursorCoverage, copilotCoverage, antigravityCoverage, devinCoverage, vscodeCoverage}
+	reads := []func(CoverageEnv) (AgentCoverage, bool){claudeCoverage, codexCoverage, geminiCoverage, cursorCoverage, copilotCoverage, antigravityCoverage, devinCoverage, vscodeCoverage, grokBotCoverage}
 	for _, a := range pluginAgents {
 		reads = append(reads, pluginCoverage(a))
 	}

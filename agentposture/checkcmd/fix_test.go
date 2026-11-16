@@ -51,7 +51,7 @@ func put(t *testing.T, path, body string) {
 
 func (h fixHome) options() Options {
 	o := options(agentposture.Result{})
-	o.Machine = func() agentposture.Result { return agentposture.ScanAll(h.env) }
+	o.Machine = func(agentposture.LiveReader) agentposture.Result { return agentposture.ScanAll(h.env) }
 	o.Env = func() agentposture.Env { return h.env }
 	return o
 }

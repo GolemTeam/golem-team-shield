@@ -31,6 +31,14 @@ func (s *scan) permissionItems() []Item {
 			once := map[string]bool{}
 			for _, raw := range lookupStrings(f.m, "permissions", "allow") {
 				rule := strings.ReplaceAll(raw, " ", "")
+				if kind, cmd := claudeShellRule(raw); kind == shellUpload {
+					if !once["upload"] {
+						once["upload"] = true
+						add("claude-code", "upload_allowed", Suspicious, f.scope, f.path, "permissions.allow", raw, "",
+							"Claude Code sends anything to any address without asking, through "+cmd)
+					}
+					continue
+				}
 				switch {
 				case claudeWriteRE.MatchString(rule) && !once["write"]:
 					once["write"] = true
@@ -102,6 +110,13 @@ func (s *scan) permissionItems() []Item {
 			if cursorWriteRE.MatchString(strings.ReplaceAll(rule, " ", "")) {
 				add("cursor", "write_allowed", Suspicious, "user", cursor, "permissions.allow", rule, "",
 					"Cursor's CLI edits any file without asking")
+				break
+			}
+		}
+		for _, rule := range lookupStrings(m, "permissions", "allow") {
+			if kind, cmd := cursorShellRule(rule); kind == shellUpload {
+				add("cursor", "upload_allowed", Suspicious, "user", cursor, "permissions.allow", rule, "",
+					"Cursor's CLI sends anything to any address without asking, through "+cmd)
 				break
 			}
 		}

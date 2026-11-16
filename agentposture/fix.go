@@ -62,8 +62,10 @@ var fixers = map[string]fixer{
 		removeIfString("bypassPermissions", "permissions", "defaultMode")),
 	"claude-code/bypass_accepted": jsonFix("brings back the warning before a bypass session (skipDangerousModePermissionPrompt)",
 		removeIfTrue("skipDangerousModePermissionPrompt")),
-	"claude-code/shell_allowed": jsonFix("takes out the allow rule that runs any shell command",
-		dropStrings(func(r string) bool { return claudeShellRules[strings.ReplaceAll(r, " ", "")] }, "permissions", "allow")),
+	"claude-code/shell_allowed": jsonFix("takes out the allow rules that run any shell command or any code",
+		dropStrings(ruleIs(claudeShellRule, shellAny, shellAnyCode), "permissions", "allow")),
+	"claude-code/upload_allowed": jsonFix("takes out the allow rules that send anything anywhere (curl, scp and the like)",
+		dropStrings(ruleIs(claudeShellRule, shellUpload), "permissions", "allow")),
 	"claude-code/write_allowed": jsonFix("takes out the allow rule that edits any file",
 		dropStrings(func(r string) bool { return claudeWriteRE.MatchString(strings.ReplaceAll(r, " ", "")) }, "permissions", "allow")),
 	"claude-code/fetch_allowed": jsonFix("takes out the allow rule that fetches any web page",
@@ -86,6 +88,10 @@ var fixers = map[string]fixer{
 		removeIfString("unrestricted", "approvalMode")),
 	"cursor/write_allowed": jsonFix("takes out the allow rule that edits any file",
 		dropStrings(func(r string) bool { return cursorWriteRE.MatchString(strings.ReplaceAll(r, " ", "")) }, "permissions", "allow")),
+	"cursor/shell_allowed": jsonFix("takes out the allow rules that run any shell command or any code",
+		dropStrings(ruleIs(cursorShellRule, shellAny, shellAnyCode), "permissions", "allow")),
+	"cursor/upload_allowed": jsonFix("takes out the allow rules that send anything anywhere (curl, scp and the like)",
+		dropStrings(ruleIs(cursorShellRule, shellUpload), "permissions", "allow")),
 
 	"devin/shell_allowed": jsonFix("takes out the allow rule that runs any shell command (exec)",
 		dropStrings(func(r string) bool { return strings.EqualFold(strings.TrimSpace(r), "exec") }, "permissions", "allow")),
@@ -198,6 +204,7 @@ var clientNames = map[string]string{
 	"gemini-cli": "Gemini CLI", "copilot": "Copilot CLI", "devin": "Devin", "vscode": "VS Code",
 	"vscode-insiders": "VS Code Insiders", "vscodium": "VSCodium", "windsurf": "Windsurf",
 	"antigravity": "Antigravity", "openclaw": "OpenClaw", "hermes": "Hermes", "ollama": "Ollama",
+	"grok-bot": "Grok Bot",
 }
 
 func realPath(home, location string) string {

@@ -209,3 +209,76 @@ func TestSecretsInAgentSettingsAndReadableCredentialStores(t *testing.T) {
 		}
 	}
 }
+
+func TestWindsurfAndGeminiRemoteServersAreRead(t *testing.T) {
+	env := postureTestEnv(t)
+	writePostureFile(t, filepath.Join(env.Home, ".codeium", "windsurf", "mcp_config.json"),
+		`{"mcpServers":{"wiki":{"serverUrl":"http://wiki.example.com/mcp"}}}`)
+	writePostureFile(t, filepath.Join(env.Home, ".gemini", "settings.json"),
+		`{"mcpServers":{"tickets":{"httpUrl":"http://tickets.example.com/mcp"}}}`)
+	got := map[string]string{}
+	for _, it := range ScanAll(env).Items {
+		if it.Check == "mcp_insecure_remote" {
+			got[it.Client] = it.Detail
+		}
+	}
+	if got["windsurf"] != "wiki talks to wiki.example.com over plain http" || got["gemini-cli"] != "tickets talks to tickets.example.com over plain http" {
+		t.Errorf("plain http findings: %v", got)
+	}
+
+	var d MCPServer
+	if err := json.Unmarshal([]byte(`{"httpUrl":"https://x.example/mcp"}`), &d); err != nil || d.URL != "https://x.example/mcp" || d.Type != "http" {
+		t.Errorf("httpUrl: %+v", d)
+	}
+	d = MCPServer{}
+	if err := json.Unmarshal([]byte(`{"url":"https://x.example/sse","httpUrl":"https://x.example/mcp"}`), &d); err != nil || d.URL != "https://x.example/sse" || d.Type != "" {
+		t.Errorf("url wins over httpUrl: %+v", d)
+	}
+}
+
+func TestPasswordInAURLIsAPlaintextSecret(t *testing.T) {
+	env := postureTestEnv(t)
+	writePostureFile(t, filepath.Join(env.Home, ".codex", "config.toml"),
+		"[mcp_servers.db]\ncommand = \"npx\"\nargs = [\"-y\", \"db-mcp\"]\n"+
+			"env = { DATABASE_URL = \"postgres://admin:Sup3rS3cret!@prod-db.internal:5432/app\" }\n"+
+			"[mcp_servers.pg]\ncommand = \"npx\"\nargs = [\"-y\", \"@modelcontextprotocol/server-postgres@0.6.2\", \"postgresql://app:hunter2@10.0.0.5/app\"]\n"+
+			"[mcp_servers.cache]\ncommand = \"redis-mcp\"\nenv = { REDIS_URL = \"redis://:s3cr3tpass@cache.internal:6379\" }\n"+
+			"[mcp_servers.ref]\ncommand = \"db-mcp\"\nenv = { DATABASE_URL = \"postgres://admin:${DB_PASSWORD}@prod-db.internal/app\" }\n"+
+			"[mcp_servers.nopass]\ncommand = \"db-mcp\"\nenv = { DATABASE_URL = \"postgres://admin@prod-db.internal/app\", DOCS = \"https://docs.internal/a:b@c\" }\n"+
+			"[mcp_servers.masked]\ncommand = \"db-mcp\"\nenv = { DATABASE_URL = \"postgres://admin:****@prod-db.internal/app\" }\n"+
+			"[mcp_servers.angle]\ncommand = \"db-mcp\"\nargs = [\"postgres://user:<password>@localhost/app\"]\n")
+
+	got := map[string]string{}
+	for _, f := range ScanConfig(env, nil).Findings {
+		if f.Check == "mcp_plaintext_secret" {
+			got[f.Subject] = f.Detail
+		}
+	}
+	for subject, want := range map[string]string{
+		"db":    "has a credential in plain text in env DATABASE_URL",
+		"pg":    "has a credential in plain text in argument 3",
+		"cache": "has a credential in plain text in env REDIS_URL",
+	} {
+		if !strings.HasPrefix(got[subject], want) {
+			t.Errorf("%s: %q, want %q", subject, got[subject], want)
+		}
+	}
+	for _, quiet := range []string{"ref", "nopass", "masked", "angle"} {
+		if d, ok := got[quiet]; ok {
+			t.Errorf("%s is not a credential: %s", quiet, d)
+		}
+	}
+}
+
+func TestCodexInlineTables(t *testing.T) {
+	servers := ParseCodexMCPServers("[mcp_servers.x]\ncommand = \"x\"\n" +
+		`env = { DEBUG = true, "API.KEY" = "a, b = c", PATH_EXTRA = 'C:\bin' , N = 3 }` + "\n" +
+		`http_headers = { Authorization = "Bearer t" }` + "\n")
+	d := servers["x"]
+	if len(d.Env) != 2 || d.Env["API.KEY"] != "a, b = c" || d.Env["PATH_EXTRA"] != `C:\bin` {
+		t.Errorf("env = %#v", d.Env)
+	}
+	if d.Headers["Authorization"] != "Bearer t" {
+		t.Errorf("headers = %#v", d.Headers)
+	}
+}

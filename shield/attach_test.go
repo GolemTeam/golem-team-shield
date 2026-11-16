@@ -28,7 +28,7 @@ func TestEveryClientTheCoverageReportShowsHasARow(t *testing.T) {
 	for _, f := range []string{
 		".claude/settings.json", ".codex/config.toml", ".gemini/installation_id", ".cursor/hooks.json",
 		".copilot/config.json", ".gemini/antigravity/x", ".hermes/config.yaml", ".openclaw/agents/x",
-		".codeium/windsurf/x", ".config/Code/User/x",
+		".codeium/windsurf/x", ".config/Code/User/x", ".grokbot/settings.json",
 	} {
 		p := filepath.Join(home, filepath.FromSlash(f))
 		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {

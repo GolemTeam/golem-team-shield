@@ -15,6 +15,7 @@ var Attachments = []Attachment{
 	{Client: "hermes", Agent: AttachPlugin, Why: "the jail reaches Hermes through the Golem plugin, which only the agent installs"},
 	{Client: "openclaw", Agent: AttachPlugin, Why: "the jail reaches OpenClaw through the Golem plugin, which only the agent installs"},
 	{Client: "vscode", Agent: AttachProfile, PastApproval: true, Why: "the profile is a setting in VS Code's settings.json, which holds the person's comments, and only the agent's editor keeps them"},
+	{Client: GrokBotClient, Agent: AttachLaunch, Why: "Grok Bot's daemon takes its shell from the app's environment, which only the app's launch sets: golem-exec starts nothing, and only the agent, always running, can restart the app on the shim"},
 }
 
 type Attachment struct {
@@ -34,6 +35,9 @@ const (
 	// AttachProfile names the shim as the shell of the terminals the agent
 	// runs its commands in.
 	AttachProfile = "terminal profile"
+	// AttachLaunch: the agent restarts the app with the shim as its SHELL,
+	// while the app has no command running.
+	AttachLaunch = "app launch"
 )
 
 // FreeHookClients are the clients golem-exec answers `golem-exec hook` for.

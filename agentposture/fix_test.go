@@ -57,7 +57,7 @@ func riskyHome(t *testing.T) (Env, string) {
   "env": {"GITHUB_TOKEN": "`+fakeToken+`"},
   "permissions": {
     "defaultMode": "bypassPermissions",
-    "allow": ["Read", "Bash(*)", "Bash", "Write(*)", "WebFetch", "mcp__*", "mcp__github"]
+    "allow": ["Read", "Bash(*)", "Bash", "Bash(python3:*)", "Bash(curl:*)", "Bash(npm test:*)", "Write(*)", "WebFetch", "mcp__*", "mcp__github"]
   },
   "skipDangerousModePermissionPrompt": true,
   "enableAllProjectMcpServers": true,
@@ -71,7 +71,7 @@ func riskyHome(t *testing.T) (Env, string) {
 	writePostureFile(t, filepath.Join(env.Home, ".gemini", "settings.json"),
 		`{"tools":{"allowed":["read_file","run_shell_command","write_file","web_fetch"]},"security":{"folderTrust":{"enabled":false}}}`)
 	writePostureFile(t, filepath.Join(env.Home, ".cursor", "cli-config.json"),
-		`{"approvalMode":"unrestricted","permissions":{"allow":["Read(**)","Write(**)"]}}`)
+		`{"approvalMode":"unrestricted","permissions":{"allow":["Read(**)","Write(**)","Shell(*)","Shell(node)","Shell(curl)","Shell(git)"]}}`)
 	writePostureFile(t, filepath.Join(env.Home, ".config", "devin", "config.json"),
 		`{"permissions":{"allow":["exec","Exec(git status)"]}}`)
 	writePostureFile(t, filepath.Join(env.Home, ".config", "Code", "User", "settings.json"),
@@ -84,7 +84,7 @@ func riskyHome(t *testing.T) (Env, string) {
 }
 
 var fixedChecks = map[string]bool{
-	"bypass_default": true, "bypass_accepted": true, "shell_allowed": true, "write_allowed": true,
+	"bypass_default": true, "bypass_accepted": true, "shell_allowed": true, "write_allowed": true, "upload_allowed": true,
 	"fetch_allowed": true, "mcp_all_allowed": true, "project_mcp_auto": true, "folder_trust_off": true,
 	"run_everything": true, "tools_auto_approve": true, "workspace_trust_off": true, "full_access": true,
 	"credential_file_readable": true, "config_plaintext_secret": true, "hook_script_writable": true,
@@ -129,7 +129,7 @@ func TestEveryFixUndoesItsFindingAndKeepsTheRest(t *testing.T) {
 	}
 
 	claude := readFile(t, filepath.Join(env.Home, ".claude", "settings.json"))
-	for _, kept := range []string{`"Read"`, `"mcp__github"`, fakeToken, `1786000000000`, `&& echo ok`, `"cleanupPeriodDays"`} {
+	for _, kept := range []string{`"Read"`, `"mcp__github"`, `"Bash(npm test:*)"`, fakeToken, `1786000000000`, `&& echo ok`, `"cleanupPeriodDays"`} {
 		if !strings.Contains(claude, kept) {
 			t.Errorf("lost %s:\n%s", kept, claude)
 		}
@@ -145,6 +145,10 @@ func TestEveryFixUndoesItsFindingAndKeepsTheRest(t *testing.T) {
 	}
 	if g := readFile(t, filepath.Join(env.Home, ".gemini", "settings.json")); !strings.Contains(g, `"allowed":["read_file"]`) || !strings.Contains(g, `"enabled":true`) {
 		t.Errorf("gemini: %s", g)
+	}
+	if c := readFile(t, filepath.Join(env.Home, ".cursor", "cli-config.json")); !strings.Contains(c, `"Shell(git)"`) || strings.Contains(c, `"Shell(`+"*"+`)"`) ||
+		strings.Contains(c, `"Shell(node)"`) || strings.Contains(c, `"Shell(curl)"`) {
+		t.Errorf("cursor: %s", c)
 	}
 	if d := readFile(t, filepath.Join(env.Home, ".config", "devin", "config.json")); !strings.Contains(d, `"Exec(git status)"`) || strings.Contains(d, `"exec"`) {
 		t.Errorf("devin: %s", d)

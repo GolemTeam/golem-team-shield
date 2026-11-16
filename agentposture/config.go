@@ -14,6 +14,7 @@ import (
 
 	"github.com/GolemTeam/golem-team-shield/internal/definition"
 	"github.com/GolemTeam/golem-team-shield/internal/defscan"
+	"github.com/GolemTeam/golem-team-shield/internal/secretpattern"
 )
 
 // The config scan reads what this machine's AI agents are configured to load
@@ -46,6 +47,9 @@ type ConfigScan struct {
 	Read       map[string]bool
 	// Servers is every MCP server a config names, as often as it names it.
 	Servers []ServerRef
+	// Remote is every server a config reaches over http or sse, with where it
+	// is configured: what the live tool read may ask.
+	Remote []RemoteServer
 }
 
 type configFile struct{ client, scope, path string }
@@ -154,6 +158,8 @@ func (d *MCPServer) UnmarshalJSON(b []byte) error {
 		Args      []any          `json:"args"`
 		Env       map[string]any `json:"env"`
 		URL       any            `json:"url"`
+		ServerURL any            `json:"serverUrl"`
+		HTTPURL   any            `json:"httpUrl"`
 		Headers   map[string]any `json:"headers"`
 	}
 	if json.Unmarshal(b, &raw) != nil {
@@ -165,6 +171,16 @@ func (d *MCPServer) UnmarshalJSON(b []byte) error {
 	}
 	d.Command, _ = raw.Command.(string)
 	d.URL, _ = raw.URL.(string)
+	if d.URL == "" {
+		d.URL, _ = raw.ServerURL.(string)
+	}
+	if http, _ := raw.HTTPURL.(string); d.URL == "" && http != "" {
+		// Gemini CLI's httpUrl is streamable HTTP, where its url is SSE.
+		d.URL = http
+		if d.Type == "" {
+			d.Type = "http"
+		}
+	}
 	for _, a := range raw.Args {
 		if s, ok := a.(string); ok {
 			d.Args = append(d.Args, s)
@@ -224,15 +240,17 @@ func (s *configScanner) scanClaudeCode() {
 		projects = append(projects, p)
 	}
 	sort.Strings(projects)
-	for i, p := range projects {
+	queued := 0
+	for _, p := range projects {
 		var proj struct {
 			MCPServers json.RawMessage `json:"mcpServers"`
 		}
 		_ = json.Unmarshal(doc.Projects[p], &proj)
 		s.scanServers(configFile{"claude-code", "local", f.path}, info, ParseMCPServers(proj.MCPServers))
-		if i >= MaxProjects || !filepath.IsAbs(p) {
+		if queued >= MaxProjects || !filepath.IsAbs(p) || !isDir(p) {
 			continue
 		}
+		queued++
 		s.queueProject(p)
 	}
 }
@@ -341,6 +359,7 @@ var (
 		`|\bnpm_[A-Za-z0-9]{36}\b`)
 	secretNameRe  = regexp.MustCompile(`(?i)token|secret|passw(?:or)?d|api[_-]?key|access[_-]?key|private[_-]?key|credential`)
 	placeholderRe = regexp.MustCompile(`(?i)^\$\{[^}]*\}$|^\$[A-Z_][A-Z0-9_]*$|^%[A-Z_][A-Z0-9_]*%$|^<.*>$|your[_-]|x{6,}|changeme|placeholder|example`)
+	urlPasswordRE = regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9+.-]*://[^\s:@/]*:([^\s@/]+)@`)
 	pkgRunners    = map[string]bool{"npx": true, "uvx": true, "bunx": true, "pnpx": true}
 	movingTags    = map[string]bool{"latest": true, "next": true, "beta": true, "alpha": true, "canary": true, "nightly": true}
 )
@@ -360,6 +379,9 @@ func (s *configScanner) scanServers(f configFile, info os.FileInfo, servers map[
 	for _, name := range names {
 		d := servers[name]
 		s.out.Servers = append(s.out.Servers, ServerRef{f.client, name})
+		if r, ok := remoteServer(f, s.display(f.path), name, d); ok {
+			s.out.Remote = append(s.out.Remote, r)
+		}
 		line := strings.TrimSpace(d.Command + " " + strings.Join(d.Args, " "))
 		if pipeToShellRe.MatchString(line) {
 			s.add(f, "mcp_pipe_to_shell", Dangerous, name, "starts by piping a download into a shell")
@@ -561,6 +583,18 @@ func isLoopbackHost(h string) bool {
 
 // plaintextSecrets names where a server definition holds a literal credential.
 // It returns names only: the value must never reach the ledger or an alert.
+// urlPassword is a URL that carries its password, postgres://app:pw@db/app,
+// which no token shape or credential-like key name catches.
+func urlPassword(v string) bool {
+	for _, m := range urlPasswordRE.FindAllStringSubmatch(v, -1) {
+		pw := m[1]
+		if !strings.Contains(pw, "$") && !placeholderRe.MatchString(pw) && !secretpattern.Placeholder(pw) {
+			return true
+		}
+	}
+	return false
+}
+
 func plaintextSecrets(d MCPServer) []string {
 	var where []string
 	check := func(kind, key, value string) {
@@ -568,7 +602,7 @@ func plaintextSecrets(d MCPServer) []string {
 		if v == "" || placeholderRe.MatchString(v) {
 			return
 		}
-		if secretValueRe.MatchString(v) || (secretNameRe.MatchString(key) && len(v) >= 16 && !strings.ContainsAny(v, " /")) {
+		if secretValueRe.MatchString(v) || urlPassword(v) || (secretNameRe.MatchString(key) && len(v) >= 16 && !strings.ContainsAny(v, " /")) {
 			where = append(where, kind+" "+key)
 		}
 	}
@@ -589,9 +623,12 @@ func plaintextSecrets(d MCPServer) []string {
 		check("header", k, d.Headers[k])
 	}
 	for i, a := range d.Args {
-		if secretValueRe.MatchString(a) {
+		if secretValueRe.MatchString(a) || urlPassword(a) {
 			where = append(where, fmt.Sprintf("argument %d", i+1))
 		}
+	}
+	if urlPassword(d.URL) {
+		where = append(where, "url")
 	}
 	return where
 }

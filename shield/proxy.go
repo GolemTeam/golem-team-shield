@@ -41,6 +41,10 @@ type Proxy struct {
 	server   *http.Server
 	tunnels  map[net.Conn]struct{}
 	closed   bool
+	cred     credentialProxy
+	// open passes every host, private ones included, for a command whose
+	// network is open but whose bound hosts still need the proxy.
+	open bool
 }
 
 // EgressRecord is one host and port a command asked the proxy for.
@@ -83,6 +87,12 @@ func NewProxy(hosts []string) *Proxy {
 	}
 }
 
+func NewOpenProxy() *Proxy {
+	p := NewProxy([]string{"*"})
+	p.open = true
+	return p
+}
+
 var cgnat = netip.MustParsePrefix("100.64.0.0/10")
 
 func usableAddr(a netip.Addr, named bool) bool {
@@ -99,6 +109,9 @@ func usableAddr(a netip.Addr, named bool) bool {
 
 // match reports whether host is allowed, and whether by name rather than *.
 func (p *Proxy) match(host string) (allowed, named bool) {
+	if p.open {
+		return true, true
+	}
 	host = strings.ToLower(strings.TrimSuffix(host, "."))
 	for _, h := range p.hosts {
 		switch {
@@ -223,6 +236,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.serveConnect(w, r)
 		return
 	}
+	if p.cred.self(p, w, r) {
+		return
+	}
 	if r.URL.Scheme != "http" || r.URL.Host == "" {
 		rec := EgressRecord{Host: r.Host, Reason: egressBadRequest}
 		p.record(rec)
@@ -233,6 +249,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.record(rec)
 	if !rec.Allowed {
 		p.refuse(w, rec)
+		return
+	}
+	if p.cred.plain(w, r, rec.Host) {
 		return
 	}
 	out := r.Clone(r.Context())
@@ -263,6 +282,9 @@ func (p *Proxy) serveConnect(w http.ResponseWriter, r *http.Request) {
 	p.record(rec)
 	if !rec.Allowed {
 		p.refuse(w, rec)
+		return
+	}
+	if p.cred.connect(p, w, r, rec, addr) {
 		return
 	}
 	up, err := p.dial(r.Context(), "tcp", addr)

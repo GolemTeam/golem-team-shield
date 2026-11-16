@@ -50,10 +50,14 @@ func areaTitle(area string) string {
 }
 
 var checkAreas = map[string]string{
-	"shell_allowed": AreaPermissions,
-	"agent_sandbox": AreaProtections,
-	"no_sandbox":    AreaProtections,
-	"shell_jail":    AreaProtections,
+	"shell_allowed":       AreaPermissions,
+	"egress_through_host": AreaPermissions,
+	"messages_send":       AreaPermissions,
+	"security_key_proxy":  AreaPermissions,
+	"computer_use":        AreaPermissions,
+	"agent_sandbox":       AreaProtections,
+	"no_sandbox":          AreaProtections,
+	"shell_jail":          AreaProtections,
 }
 
 func areaOf(check string) string {
@@ -112,7 +116,7 @@ func ScanAll(env Env) Result {
 	res.Items = append(res.Items, s.permissionItems()...)
 	res.Items = append(res.Items, s.secretItems()...)
 	res.Items = append(res.Items, s.sourceItems()...)
-	tools, cov := s.toolDescriptionItems(cs.Servers)
+	tools, cov := s.toolDescriptionItems(cs.Servers, cs.Remote)
 	res.Items = append(res.Items, tools...)
 	if env.Repo == "" {
 		res.Tools = cov

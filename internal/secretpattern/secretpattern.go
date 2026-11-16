@@ -94,7 +94,7 @@ func Secrets() []Pattern { return append([]Pattern(nil), secrets...) }
 // one character. Such a value is not a secret, and treating it as one would
 // manufacture "a credential appeared here" out of an example.
 func Placeholder(m string) bool {
-	if m == "" {
+	if m == "" || GolemPlaceholder(m) {
 		return true
 	}
 	l := strings.ToLower(m)
@@ -119,7 +119,7 @@ func Find(value string) (string, bool) {
 				}
 				start, end = loc[2*p.Group], loc[2*p.Group+1]
 			}
-			if p.RejectPlaceholder && Placeholder(value[start:end]) {
+			if (p.RejectPlaceholder && Placeholder(value[start:end])) || GolemPlaceholder(value[loc[0]:min(len(value), loc[1]+80)]) {
 				continue
 			}
 			return p.Type, true

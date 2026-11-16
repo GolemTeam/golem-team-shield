@@ -25,6 +25,7 @@ type fakeWitness struct {
 	policy   shield.Policy
 	requests []shield.PolicyRequest
 	runs     []shield.RunRecord
+	swap     http.HandlerFunc
 }
 
 func newFakeWitness(t *testing.T, p shield.Policy) *fakeWitness {
@@ -43,6 +44,12 @@ func newFakeWitness(t *testing.T, p shield.Policy) *fakeWitness {
 			var rec shield.RunRecord
 			_ = json.NewDecoder(r.Body).Decode(&rec)
 			w.runs = append(w.runs, rec)
+		case "/api/v1/shield/credential-swap":
+			if w.swap == nil {
+				http.NotFound(rw, r)
+				return
+			}
+			w.swap(rw, r)
 		default:
 			http.NotFound(rw, r)
 		}
@@ -249,7 +256,7 @@ func TestOnlyARealSocketIsTakenAsTheAgentSocket(t *testing.T) {
 }
 
 func TestProxyEnvPointsEveryVariableAtTheProxy(t *testing.T) {
-	env := proxyEnv([]string{"PATH=/bin", "https_proxy=http://corp:3128", "NO_PROXY=localhost", "no_proxy=*", "NODE_USE_ENV_PROXY=0"}, 4321)
+	env := proxyEnv([]string{"PATH=/bin", "https_proxy=http://corp:3128", "NO_PROXY=localhost", "no_proxy=*", "NODE_USE_ENV_PROXY=0"}, "http://127.0.0.1:4321")
 	got := strings.Join(env, " ")
 	wants := []string{"PATH=/bin", "https_proxy=http://127.0.0.1:4321", "all_proxy=http://127.0.0.1:4321", "NODE_USE_ENV_PROXY=1"}
 	if runtime.GOOS != "windows" {
@@ -276,7 +283,7 @@ func TestRefusedHostsAreNamedOnStderrWithWhereToAllowThem(t *testing.T) {
 	if !p.Proxied() || !s.standalone {
 		t.Fatalf("policy %+v standalone %v", p, s.standalone)
 	}
-	if err := s.startProxy(p); err != nil {
+	if err := s.startProxy(p, nil); err != nil {
 		t.Fatal(err)
 	}
 	defer s.proxy.Close()

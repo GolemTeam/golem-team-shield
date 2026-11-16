@@ -18,7 +18,7 @@ const footerLine = "the footer of a machine scan"
 func options(res agentposture.Result) Options {
 	return Options{
 		Name: "golem-check", Version: "1.2.3",
-		Machine: func() agentposture.Result { return res },
+		Machine: func(agentposture.LiveReader) agentposture.Result { return res },
 		Footer: func(out io.Writer) error {
 			_, err := io.WriteString(out, footerLine+"\n")
 			return err

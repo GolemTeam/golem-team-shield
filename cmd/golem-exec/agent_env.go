@@ -31,6 +31,14 @@ var clientMarkers = []struct{ env, value, agent string }{
 // sets none, what its hook noted for this directory. A command it can tie to
 // no session gets the machine's policy.
 func sessionFromEnv(getenv func(string) string, home, cwd string, now time.Time) (sessionID, agentID string) {
+	// Grok Bot's commands also carry Cursor's markers, and SAND_AGENT reaches
+	// only its state shell: a command has just the daemon's generation.
+	if getenv("SAND_AGENT") == "1" || getenv("SAND_LOCAL_EXEC_GENERATION") != "" {
+		if id := getenv("CURSOR_CONVERSATION_ID"); sessionIDRE.MatchString(id) {
+			return id, "grok-bot"
+		}
+		return "", "grok-bot"
+	}
 	// Copilot CLI's hook names the session the Golem agent knows; whether its
 	// commands' variable is the same id is not established, so the note wins.
 	if getenv("COPILOT_AGENT_SESSION_ID") != "" || getenv("COPILOT_CLI") == "1" {

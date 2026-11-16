@@ -43,7 +43,7 @@ func fixWith(out, stderr io.Writer, o Options, env agentposture.Env, plan agentp
 		fmt.Fprintf(out, "Dry run: nothing was changed. To make these changes: %s -fix -yes\n", o.Name)
 		return 0
 	}
-	before := o.Machine()
+	before := o.Machine(nil)
 	dir, err := backUp(env.Home, plan, now)
 	if err != nil {
 		fmt.Fprintln(stderr, o.Name+": could not back up the files, so nothing was changed: "+reason(err))
@@ -59,7 +59,7 @@ func fixWith(out, stderr io.Writer, o Options, env agentposture.Env, plan agentp
 		done = append(done, f)
 	}
 	why := unparsed(plan.Files)
-	after := o.Machine()
+	after := o.Machine(nil)
 	if why == "" {
 		why = worse(before, after)
 	}

@@ -23,7 +23,7 @@ func literalSecret(key, value string) bool {
 	if v == "" || placeholderRe.MatchString(v) || secretpattern.Placeholder(v) {
 		return false
 	}
-	if _, ok := secretpattern.Find(v); ok {
+	if _, ok := secretpattern.Find(v); ok || urlPassword(v) {
 		return true
 	}
 	return secretKeyRE.MatchString(key) && len(v) >= 16 && !strings.ContainsAny(v, " /")

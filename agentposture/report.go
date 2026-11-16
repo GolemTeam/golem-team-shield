@@ -8,7 +8,7 @@ import (
 
 // NotRead is what no report from this package can say, for the caller to end
 // with when nothing else on the machine reads it.
-const NotRead = "This check never starts an MCP server, so it reads a server's tools only where an agent\nstored them. The Golem agent reads each server's tools as your agents receive them, and\nchecks them with the same rules."
+const NotRead = "This check never starts an MCP server. It reads a server's tools where an agent stored them,\nand with -live-tools asks each remote server for its own. The Golem agent reads each server's\ntools as your agents receive them, and checks them with the same rules."
 
 // WriteReport prints a scan for a person: the grade, a line per area, each
 // dangerous and suspicious finding, a count of the rest, and what protects
@@ -60,7 +60,7 @@ func WriteReport(w io.Writer, res Result) {
 	}
 	writeToolCoverage(w, res.Tools)
 	fmt.Fprintln(w)
-	fmt.Fprintf(w, "%d dangerous, %d suspicious. Nothing was sent anywhere.\n", counts[Dangerous], counts[Suspicious])
+	fmt.Fprintf(w, "%d dangerous, %d suspicious. %s\n", counts[Dangerous], counts[Suspicious], SentLine(res.Tools))
 }
 
 func areaSummary(a AreaScore) string {

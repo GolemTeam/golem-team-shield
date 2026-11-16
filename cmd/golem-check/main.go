@@ -28,8 +28,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	})
 }
 
-func scanMachine() agentposture.Result {
+func scanMachine(live agentposture.LiveReader) agentposture.Result {
 	env := agentposture.DefaultEnv()
+	env.LiveTools = live
 	res := agentposture.ScanAll(env)
 	res.Add(checkcmd.ShellJailItems(shield.CoverageOf(shield.CoverageEnv{Home: env.Home, GOOS: env.GOOS, LoginShell: os.Getenv("SHELL"), CodexHomes: env.CodexHomes, OpenClawDir: os.Getenv("OPENCLAW_STATE_DIR")}),
 		checkcmd.JailRequiredBy(env.Home, env.GOOS))...)

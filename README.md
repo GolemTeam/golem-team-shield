@@ -306,7 +306,7 @@ dangerous or suspicious finding, as a diff per file, and changes nothing.
 | Finding | What `-fix` does |
 |---|---|
 | Permission prompts off or a run-everything mode: Claude Code's `bypassPermissions` default and its accepted bypass warning, Cursor CLI's `"approvalMode": "unrestricted"`, Codex's `danger-full-access` | Takes the setting out, so the agent goes back to its default, which asks |
-| Allow rules for any command, file, page or MCP tool: `Bash(*)`, `Write(*)`, `WebFetch`, `mcp__*`, Gemini CLI's `run_shell_command`, `write_file` and `web_fetch`, Devin's `exec` | Takes the rule out and keeps the narrower ones |
+| Allow rules for any command, any code, any upload, file, page or MCP tool: `Bash(*)`, `Bash(python3:*)`, `Bash(curl:*)`, `Write(*)`, `WebFetch`, `mcp__*`, Cursor CLI's `Shell(*)`, Gemini CLI's `run_shell_command`, `write_file` and `web_fetch`, Devin's `exec` | Takes the rule out and keeps the narrower ones |
 | `enableAllProjectMcpServers`, and an editor's `chat.tools.global.autoApprove` | Takes it out |
 | Workspace trust off in an editor, folder trust off in Gemini CLI | Turns it back on |
 | A settings file holding a credential, or an agent's sign-in file, that other users can read | Makes it readable by you only |
@@ -408,10 +408,17 @@ Copilot CLI it reads the MCP servers, a repository's
 `.github/copilot-instructions.md` and the shell jail.
 
 Unless you run `-fix -yes`, it reads files and nothing else, and unless you run
-`-upload`, it sends nothing anywhere. It never starts an MCP server. It reads a server's tool descriptions from the copy an agent wrote
+`-upload` or `-live-tools`, it sends nothing anywhere. It never starts an MCP server. It reads a server's tool descriptions from the copy an agent wrote
 down the last time it started it (Cursor, Antigravity, the VS Code family and
 Codex keep one), and names each configured server no agent kept a copy of; the
-Golem agent checks those as your agents receive them. It names a secret's file
+Golem agent checks those as your agents receive them. `-live-tools` also asks
+each remote (`http` or `sse`) server in your own configs for its tools:
+`initialize` and `tools/list` only, with the headers your config already sends
+it and to its URL alone, never a tool call, and it reports any tool whose
+description changed since an agent stored its copy. It skips servers a
+repository's files configure, and never starts a local one. Add `-pin` to keep
+a hash of what each server said in `~/.golem/check-pins.json`; the next
+`-live-tools` run flags any description that changed since. It names a secret's file
 and setting, never the secret itself, and a finding in a tool description names
 the server, the tool and the rule, never the text.
 

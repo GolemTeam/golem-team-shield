@@ -38,8 +38,15 @@ type htmlPage struct {
 	Dangerous   int
 	Suspicious  int
 	NotRead     string
+	ToolsLive   []htmlProtection
 	ToolsRead   []htmlProtection
-	ToolsUnread []htmlProtection
+	ToolsUnread []htmlUnread
+	Sent        string
+}
+
+type htmlUnread struct {
+	Heading string
+	Lines   []htmlProtection
 }
 
 // WriteHTML writes a scan as one self-contained page: inline styles, no
@@ -47,7 +54,13 @@ type htmlPage struct {
 func WriteHTML(w io.Writer, res Result, meta HTMLMeta) error {
 	rep := Score(res)
 	page := htmlPage{Meta: meta, Report: rep, Repo: res.Repo, NotRead: NotRead,
-		ToolsRead: serverLines(res.Tools.Read), ToolsUnread: serverLines(res.Tools.Unread)}
+		ToolsLive: serverLines(res.Tools.Live), ToolsRead: serverLines(res.Tools.Read), Sent: SentLine(res.Tools)}
+	if len(res.Tools.Unread) > 0 && res.Tools.Why == nil {
+		page.ToolsUnread = []htmlUnread{{"Not read, as no agent stored a copy:", serverLines(res.Tools.Unread)}}
+	}
+	for _, g := range unreadGroups(res.Tools) {
+		page.ToolsUnread = append(page.ToolsUnread, htmlUnread{"Not read, " + g.text + ":", serverLines(g.refs)})
+	}
 	byArea := map[string]*htmlArea{}
 	for _, a := range rep.Areas {
 		if a.Area == AreaProtections {
@@ -161,7 +174,7 @@ footer{margin-top:32px;color:var(--muted);font-size:13px}
 <div>
 {{if .Report.Grade}}<div class="score">{{.Report.Score}} of 100</div>{{else}}<div class="score">{{if .Repo}}No agent files found{{else}}No AI coding agents found{{end}}</div>{{end}}
 <div>{{.Dangerous}} dangerous, {{.Suspicious}} suspicious.</div>
-<div class="muted">Read from the agents' own files on this machine. Nothing was sent anywhere.</div>
+<div class="muted">Read from the agents' own files on this machine. {{.Sent}}</div>
 </div>
 </section>
 
@@ -185,10 +198,12 @@ footer{margin-top:32px;color:var(--muted);font-size:13px}
 </div>
 {{end}}{{end}}
 {{if not .Repo}}<h2>MCP tool descriptions</h2>
-{{if .ToolsRead}}<p class="muted">Read from the copy an agent stored:</p>
+{{if .ToolsLive}}<p class="muted">Read from the server itself:</p>
+<ul class="prot">{{range .ToolsLive}}<li><strong>{{.Client}}</strong> <span class="muted">{{.Line}}</span></li>{{end}}</ul>
+{{end}}{{if .ToolsRead}}<p class="muted">Read from the copy an agent stored:</p>
 <ul class="prot">{{range .ToolsRead}}<li><strong>{{.Client}}</strong> <span class="muted">{{.Line}}</span></li>{{end}}</ul>
-{{end}}{{if .ToolsUnread}}<p class="muted">Not read, as no agent stored a copy:</p>
-<ul class="prot">{{range .ToolsUnread}}<li><strong>{{.Client}}</strong> <span class="muted">{{.Line}}</span></li>{{end}}</ul>
+{{end}}{{range .ToolsUnread}}<p class="muted">{{.Heading}}</p>
+<ul class="prot">{{range .Lines}}<li><strong>{{.Client}}</strong> <span class="muted">{{.Line}}</span></li>{{end}}</ul>
 {{end}}<p></p><div class="note">{{.NotRead}}</div>{{end}}
 <footer>Made by golem-check, open source at github.com/GolemTeam/golem-team-shield. Paths under the home directory are shown as ~; the host and user names are not in this report, and neither is any file's text.</footer>
 </main></body>

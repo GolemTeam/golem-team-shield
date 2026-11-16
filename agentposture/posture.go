@@ -2,11 +2,13 @@
 // run, from their own settings files, and reports the settings that let them
 // act without asking: permission prompts off, every command allowed, no
 // sandbox. It covers Claude Code (including its managed and MDM policy),
-// Cursor, Codex, Gemini CLI, Devin, and the VS Code family of editors.
+// Cursor, Codex, Gemini CLI, Devin, Grok Bot, and the VS Code family of
+// editors.
 //
-// It reads files and nothing else: no network, no processes, and it never
-// reports a file's contents, only a setting's name and a value from a fixed
-// vocabulary.
+// It reads files and nothing else, save one process's environment through
+// Env.Processes (Grok Bot's local-exec daemon, for its SHELL): no network, and
+// it never reports a file's contents, only a setting's name and a value from a
+// fixed vocabulary.
 package agentposture
 
 import (
@@ -46,7 +48,7 @@ const (
 // contents, and every Value comes from a fixed vocabulary.
 type Item struct {
 	// Client is the agent: claude-code, cursor, codex, gemini-cli, devin,
-	// vscode, vscode-insiders, vscodium, windsurf or antigravity.
+	// grok-bot, vscode, vscode-insiders, vscodium, windsurf or antigravity.
 	Client string `json:"client,omitempty"`
 	// Check names the finding, e.g. bypass_default, run_everything or
 	// full_access.
@@ -93,12 +95,17 @@ type Env struct {
 	// Repo is set by ScanRepo: only that repository's files are read, so an
 	// agent counts as in use when the repository configures it.
 	Repo string
+	// Processes reads the processes a check needs; nil reads none.
+	Processes Processes
+	// LiveTools asks remote MCP servers for their tools (-live-tools); nil,
+	// the default, asks none.
+	LiveTools LiveReader
 }
 
 // DefaultEnv is the current machine's Env.
 func DefaultEnv() Env {
 	home := userHome()
-	env := Env{Home: home, GOOS: runtime.GOOS, AppData: os.Getenv("APPDATA"), XDG: os.Getenv("XDG_CONFIG_HOME")}
+	env := Env{Home: home, GOOS: runtime.GOOS, AppData: os.Getenv("APPDATA"), XDG: os.Getenv("XDG_CONFIG_HOME"), Processes: osProcesses{}}
 	switch env.GOOS {
 	case "darwin":
 		env.ManagedDir = "/Library/Application Support/ClaudeCode"
@@ -147,7 +154,7 @@ type scan struct {
 }
 
 // Scan reads every supported agent's settings and returns what it finds,
-// worst first, at most MaxItems. It only reads files.
+// worst first, at most MaxItems.
 func Scan(env Env) []Item {
 	if s := scanEnv(env); s != nil {
 		return s.items
@@ -167,6 +174,7 @@ func scanEnv(env Env) *scan {
 	s.editors()
 	s.editorState()
 	s.devin()
+	s.grokBot()
 	s.projectSettings()
 	Sort(s.items)
 	if len(s.items) > MaxItems {
@@ -343,8 +351,6 @@ func claudeCodeInUse(home string) bool {
 	return isDir(filepath.Join(home, ".claude"))
 }
 
-var claudeShellRules = map[string]bool{"Bash": true, "Bash(*)": true, "Bash(:*)": true, "Bash(*:*)": true}
-
 func (s *scan) claudeCode() {
 	const client = "claude-code"
 	if !s.claudeInUse() {
@@ -382,12 +388,9 @@ func (s *scan) claudeCode() {
 			}
 			s.add(client, "bypass_accepted", sev, f.scope, f.path, "skipDangerousModePermissionPrompt", "true", detail)
 		}
-		for _, rule := range lookupStrings(f.m, "permissions", "allow") {
-			if claudeShellRules[strings.ReplaceAll(rule, " ", "")] {
-				s.add(client, "shell_allowed", Suspicious, f.scope, f.path, "permissions.allow", rule,
-					"any shell command runs without asking")
-				break
-			}
+		if rule, cmd, kind := broadestShellRule(lookupStrings(f.m, "permissions", "allow"), claudeShellRule); kind != shellNone {
+			s.add(client, "shell_allowed", Suspicious, f.scope, f.path, "permissions.allow", rule,
+				shellDetail(kind, cmd, "any shell command runs without asking"))
 		}
 		// A project's sandbox setting is that project's, not the machine's
 		// default.
@@ -406,6 +409,13 @@ func (s *scan) claudeCode() {
 	}
 }
 
+func cursorShellDetail(kind shellRuleKind, cmd string) string {
+	if kind == shellAnyCode {
+		return "Cursor's CLI runs any code without asking, through " + cmd
+	}
+	return "Cursor's CLI runs any shell command without asking"
+}
+
 func (s *scan) cursorCLI() {
 	const client = "cursor"
 	path := filepath.Join(s.env.Home, ".cursor", "cli-config.json")
@@ -421,6 +431,10 @@ func (s *scan) cursorCLI() {
 	case "auto-review":
 		s.add(client, "auto_review", Info, "user", path, "approvalMode", "auto-review",
 			"Cursor's CLI lets a model approve commands instead of asking")
+	}
+	if rule, cmd, kind := broadestShellRule(lookupStrings(m, "permissions", "allow"), cursorShellRule); kind != shellNone {
+		s.add(client, "shell_allowed", Suspicious, "user", path, "permissions.allow", rule,
+			cursorShellDetail(kind, cmd))
 	}
 	switch lookupString(m, "sandbox", "mode") {
 	case "disabled":

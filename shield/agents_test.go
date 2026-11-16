@@ -10,6 +10,23 @@ import (
 	"testing"
 )
 
+func TestIsShimIsTheInstalledShim(t *testing.T) {
+	for path, want := range map[string]bool{
+		"/Users/x/.golem/bin/golem-zsh":  true,
+		"/Users/x/.golem/bin/golem-bash": true,
+		"/bin/zsh":                       false,
+		"/Users/x/.golem/bin/zsh":        false,
+		"/Users/x/golem-zsh/zsh":         false,
+		"/tmp/scratch/bin/golem-zsh":     false,
+		"/Users/y/.golem/bin/golem-zsh":  false,
+		"":                               false,
+	} {
+		if IsShim("/Users/x", "darwin", path) != want {
+			t.Errorf("IsShim(%q) = %v", path, !want)
+		}
+	}
+}
+
 var awkwardCommands = []string{
 	`echo hi`,
 	`echo 'single' "double" $HOME`,

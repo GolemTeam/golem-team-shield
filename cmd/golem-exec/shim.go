@@ -108,13 +108,24 @@ func (s *shim) run(shell string, args []string) int {
 	tmp = realPath(tmp)
 
 	env, dropped := shield.FilterEnv(s.env, policy, tmp)
-	if policy.Proxied() {
-		if err := s.startProxy(policy); err != nil {
+	creds := s.prepareCredentials(policy, sessionID, fromWitness)
+	if policy.Proxied() || creds != nil {
+		if err := s.startProxy(policy, creds); err != nil {
 			fmt.Fprintln(s.stderr, "golem-exec: can't start the shield's proxy for this command; not running it")
 			return 126
 		}
 		defer s.proxy.Close()
-		env = proxyEnv(env, s.proxyPort)
+		url := fmt.Sprintf("http://127.0.0.1:%d", s.proxyPort)
+		if creds != nil {
+			url = creds.proxyURL(s.proxyPort)
+		}
+		env = proxyEnv(env, url)
+		if creds != nil {
+			if env, err = creds.env(env, tmp, s.proxy, !policy.Proxied()); err != nil {
+				fmt.Fprintln(s.stderr, "golem-exec: can't set up this command's shared credentials; not running it")
+				return 126
+			}
+		}
 	}
 	rec := shield.RunRecord{
 		SessionID: sessionID, AgentID: agentID, RunTag: tag,
@@ -134,6 +145,9 @@ func (s *shim) run(shell string, args []string) int {
 	if s.proxy != nil {
 		rec.Egress, rec.EgressOverflow = s.proxy.Records()
 		s.tellRefused(rec.Egress)
+	}
+	if creds != nil {
+		creds.record(&rec, s.proxy)
 	}
 	if fromWitness {
 		s.report(rec)
@@ -202,12 +216,25 @@ const (
 
 // startProxy listens for this command's proxy on a fresh loopback port, the
 // only one its jail lets it reach.
-func (s *shim) startProxy(p shield.Policy) error {
+func (s *shim) startProxy(p shield.Policy, creds *credentialSetup) error {
 	ln, err := listenProxy()
 	if err != nil {
 		return err
 	}
-	s.proxy = shield.NewProxy(p.AllowedHosts)
+	switch {
+	case !p.Proxied():
+		s.proxy = shield.NewOpenProxy()
+	case creds != nil:
+		s.proxy = shield.NewProxy(append(slices.Clone(p.AllowedHosts), creds.hosts()...))
+	default:
+		s.proxy = shield.NewProxy(p.AllowedHosts)
+	}
+	if creds != nil {
+		if err := creds.enable(s.proxy); err != nil {
+			ln.Close()
+			return err
+		}
+	}
 	s.proxy.Hint = agentHostsHint
 	if s.standalone {
 		s.proxy.Hint = standaloneHostsHint
@@ -239,7 +266,7 @@ var proxyVars = []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"}
 // proxyEnv points every proxy variable at the command's proxy and clears
 // NO_PROXY, which would send a host around it to be refused. Node honours the
 // variables only with NODE_USE_ENV_PROXY.
-func proxyEnv(env []string, port int) []string {
+func proxyEnv(env []string, url string) []string {
 	out := env[:0:0]
 	for _, kv := range env {
 		name, _, _ := strings.Cut(kv, "=")
@@ -248,7 +275,6 @@ func proxyEnv(env []string, port int) []string {
 		}
 		out = append(out, kv)
 	}
-	url := fmt.Sprintf("http://127.0.0.1:%d", port)
 	for _, v := range proxyVars[:3] {
 		// Windows names are one name whatever their case, so a second
 		// spelling would only replace the first; lower case is what Git

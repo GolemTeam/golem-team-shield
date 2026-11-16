@@ -195,17 +195,23 @@ func (s *scan) hookItems() []Item {
 			definition.Text(definition.KindFile, "hooks.json", claudeShapedHooks(theirs)),
 			definition.Text(definition.KindFile, "hooks.sh", []byte(body.String())),
 		}
-		seen := map[string]bool{}
+		var order []string
+		worst := map[string]string{}
 		for _, f := range defscan.Scan(definition.Build("plugin", hf.client, definition.SourceConfigScan, parts)) {
-			if seen[f.Rule] {
+			sev := ruleSeverity(f.Severity, f.Confidence)
+			if cur, ok := worst[f.Rule]; !ok {
+				order = append(order, f.Rule)
+			} else if Rank(cur) <= Rank(sev) {
 				continue
 			}
-			seen[f.Rule] = true
-			title := ruleTitles[f.Rule]
+			worst[f.Rule] = sev
+		}
+		for _, rule := range order {
+			title := ruleTitles[rule]
 			if title == "" {
-				title = f.Rule
+				title = rule
 			}
-			add(f.Rule, ruleSeverity(f.Severity, f.Confidence), "", "a hook: "+strings.ToLower(title[:1])+title[1:])
+			add(rule, worst[rule], "", "a hook: "+strings.ToLower(title[:1])+title[1:])
 		}
 		for _, c := range theirs {
 			if hiddenErrorsRE.MatchString(strings.TrimSpace(c.command)) {
