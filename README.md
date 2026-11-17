@@ -338,7 +338,7 @@ permissions:
   security-events: write   # to upload the findings to code scanning
 steps:
   - uses: actions/checkout@v4
-  - uses: GolemTeam/golem-team-shield@v0.2.0
+  - uses: GolemTeam/golem-team-shield@v0.3.9
     with:
       fail-on: dangerous     # or suspicious, or none
 ```
@@ -363,7 +363,7 @@ alert the same way. It is off unless you turn it on:
 3. Turn `upload` on:
 
 ```yaml
-  - uses: GolemTeam/golem-team-shield@v0.2.0
+  - uses: GolemTeam/golem-team-shield@v0.3.9
     with:
       fail-on: dangerous
       upload: true
